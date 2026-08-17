@@ -31,31 +31,8 @@ services:
       retries: 3
       start_period: 40s
 
-  # Reverse Proxy (Caddy)
-  caddy:
-    image: caddy:2-alpine
-    container_name: mysync-caddy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
-      - caddy-data:/data
-      - caddy-config:/config
-    networks:
-      - mysync-network
-    depends_on:
-      - mysync-server
-    environment:
-      - DOMAIN=${DOMAIN:-localhost}
-
 volumes:
   mysync-data:
-    driver: local
-  caddy-data:
-    driver: local
-  caddy-config:
     driver: local
 
 networks:
