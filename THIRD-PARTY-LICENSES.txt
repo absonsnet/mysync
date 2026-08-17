@@ -1,4 +1,4 @@
-This project includes code originally forked from the `keepsync` repository, which was provided under the MIT License by Lachlan Allison.
+This project as a whole is licensed under the AGPL-3.0. However, it was originally built using MIT-licensed code forked from the `keepsync` repository by Lachlan Allison. The original MIT license for those foundational parts is preserved below for legal compliance:
 
 ---
 
