@@ -2,7 +2,7 @@
 
 > Sync tabs across Chrome and Firefox browsers with a self-hosted server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-blue.svg)](https://golang.org)
 [![Node Version](https://img.shields.io/badge/Node-18+-green.svg)](https://nodejs.org)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
@@ -267,8 +267,12 @@ docker-compose up -d         # server + Caddy reverse proxy with HTTPS
 
 ---
 
+## Credits
+
+This project was originally forked from the [keepsync](https://github.com/lachlanallison/keepsync) repository by [Lachlan Allison](https://github.com/lachlanallison). The codebase has since been heavily modified, rebranded, and upgraded. A huge thanks to Lachlan for providing such an incredible starting point!
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+AGPL-3.0 — see [LICENSE](LICENSE).
 
 **Questions?** Open an issue.
