@@ -183,7 +183,7 @@
           await this.storage.setQueuedEvents(storedEvents);
           if (typeof logger !== 'undefined' && logger.info) {
             logger.info(
-              '[KeepSync:history] coalesced same-URL update (latest title); queue size',
+              '[MySync:history] coalesced same-URL update (latest title); queue size',
               storedEvents.length
             );
           }
@@ -194,7 +194,7 @@
 
       storedEvents.push(event);
       if (typeof logger !== 'undefined' && logger.info) {
-        logger.info('[KeepSync:history] queued tab event; queue size', storedEvents.length, {
+        logger.info('[MySync:history] queued tab event; queue size', storedEvents.length, {
           type: et,
           url: (url || '').slice(0, 80)
         });

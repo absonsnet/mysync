@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"keepsync-server/internal/models"
+	"mysync-server/internal/models"
 
 	"github.com/gorilla/mux"
 )

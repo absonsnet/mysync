@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"keepsync-server/internal/config"
+	"mysync-server/internal/config"
 )
 
 // Mailer sends authentication-related emails via SMTP.
@@ -37,7 +37,7 @@ func New(cfg *config.Config) *Mailer {
 		username: cfg.SMTPUsername,
 		password: cfg.SMTPPassword,
 		from:     cfg.SMTPFrom,
-		appName:  "KeepSync",
+		appName:  "MySync",
 	}
 }
 

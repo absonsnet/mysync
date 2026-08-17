@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KeepSync · Settings</title>
+  <title>MySync · Settings</title>
   <link rel="icon" type="image/png" href="../../icons/icon-32.png" />
   <link rel="stylesheet" href="options.css?v=2">
 </head>
@@ -11,7 +11,7 @@
   <div class="container">
     <header class="header">
       <div class="logo">
-        <h1>KeepSync</h1>
+        <h1>MySync</h1>
       </div>
       <div class="version" style="display: flex; align-items: center; gap: 8px;">
         <div class="version-lines" style="text-align: right; line-height: 1.2;">
@@ -57,7 +57,7 @@
         <div class="section">
           <h2>Connect to your server</h2>
           <p class="section-lede">
-            Point the extension at your self-hosted KeepSync server. The
+            Point the extension at your self-hosted MySync server. The
             first time you boot the server it prints a one-shot invite token
             in the log — use that for your first device. After that, add
             more browsers from this same page with a pairing code.
@@ -66,7 +66,7 @@
           <div class="form-group">
             <label for="serverUrl">Server URL</label>
             <input type="url" id="serverUrl" placeholder="http://localhost:8787" required>
-            <small class="help-text">The public URL of your KeepSync server (http or https).</small>
+            <small class="help-text">The public URL of your MySync server (http or https).</small>
           </div>
 
           <div class="form-group">
@@ -90,12 +90,12 @@
           <p class="section-lede">
             Recommended for your <strong>first</strong> device. Copy the token
             from the server log (printed once on first boot) or generate one
-            with <code>keepsync-server invite --email you@example.com</code>.
+            with <code>mysync-server invite --email you@example.com</code>.
             <details style="display: inline-block; vertical-align: middle; margin-left: 4px;">
               <summary style="cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--accent, #E8801C); color: #fff; font-size: 12px; font-weight: bold; line-height: 1; text-align: center; list-style: none;" title="Custom env instructions">?</summary>
               <div style="position: absolute; margin-top: 8px; padding: 12px; background: var(--bg-panel); border: 1px solid var(--line); border-radius: 4px; z-index: 10; font-size: 0.9em; max-width: 450px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); text-align: left; color: var(--ink);">
-                <p style="margin-top: 0; margin-bottom: 8px; color: var(--ink-muted);">If your <code>.env</code> is at a different location (e.g., <code>/etc/secrets/keepsync.env</code>), use:</p>
-                <code style="display: block; white-space: normal; word-break: break-all; padding: 8px; background: var(--bg-inset); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; line-height: 1.4;">sudo bash -c "set -a; source /etc/secrets/keepsync.env; set +a; ./keepsync-server invite --email you@example.com --ttl 24h"</code>
+                <p style="margin-top: 0; margin-bottom: 8px; color: var(--ink-muted);">If your <code>.env</code> is at a different location (e.g., <code>/etc/secrets/mysync.env</code>), use:</p>
+                <code style="display: block; white-space: normal; word-break: break-all; padding: 8px; background: var(--bg-inset); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; line-height: 1.4;">sudo bash -c "set -a; source /etc/secrets/mysync.env; set +a; ./mysync-server invite --email you@example.com --ttl 24h"</code>
               </div>
             </details>
           </p>

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"keepsync-server/internal/models"
+	"mysync-server/internal/models"
 )
 
 // normalizeAggregatedHistoryTimestamp converts SQLite / driver text like

@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"keepsync-server/internal/api"
-	"keepsync-server/internal/config"
-	"keepsync-server/internal/models"
-	"keepsync-server/internal/storage"
+	"mysync-server/internal/api"
+	"mysync-server/internal/config"
+	"mysync-server/internal/models"
+	"mysync-server/internal/storage"
 )
 
 // TestServer wraps the HTTP server for testing

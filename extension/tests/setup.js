@@ -1,4 +1,4 @@
-// Jest setup for KeepSync extension tests
+// Jest setup for MySync extension tests
 // Provides a minimal WebExtension API mock.
 
 global.browser = {

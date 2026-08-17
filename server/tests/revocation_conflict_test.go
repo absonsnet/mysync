@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"keepsync-server/internal/auth"
-	"keepsync-server/internal/config"
-	"keepsync-server/internal/models"
+	"mysync-server/internal/auth"
+	"mysync-server/internal/config"
+	"mysync-server/internal/models"
 )
 
 // activateDevMode registers a device against the test server using the

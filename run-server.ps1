@@ -7,7 +7,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-Write-Host "Starting KeepSync server..." -ForegroundColor Cyan
+Write-Host "Starting MySync server..." -ForegroundColor Cyan
 
 # Ensure Go is installed
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {

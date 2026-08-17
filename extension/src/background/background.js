@@ -31,7 +31,7 @@ class BackgroundService {
     this._lastRealtimeNudgeStartedAt = 0;
     const svc = this;
     if (typeof self !== 'undefined') {
-      self.keepSyncNotifyDeviceRevoked = () => svc.clearPairingAfterServerRevoke('http_401');
+      self.mySyncNotifyDeviceRevoked = () => svc.clearPairingAfterServerRevoke('http_401');
     }
   }
 
@@ -650,7 +650,7 @@ class BackgroundService {
         if (wsOpen) {
           return;
         }
-        logger.info('[KeepSync:realtime] nudge: WebSocket not open; forcing reconnect');
+        logger.info('[MySync:realtime] nudge: WebSocket not open; forcing reconnect');
         this.startRealtimeListener({ force: true });
         return;
       }
@@ -682,7 +682,7 @@ class BackgroundService {
       }
       this._lastRealtimeNudgeStartedAt = now;
       this.dropStaleEventSourceIfNeeded();
-      logger.info('[KeepSync:realtime] nudge: reconnecting SSE', {
+      logger.info('[MySync:realtime] nudge: reconnecting SSE', {
         hadSource: !!this.realtimeSource,
         readyState: this.realtimeSource && this.realtimeSource.readyState
       });

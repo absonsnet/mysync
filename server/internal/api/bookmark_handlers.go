@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"keepsync-server/internal/models"
+	"mysync-server/internal/models"
 )
 
 // getBookmarks handles GET /bookmarks

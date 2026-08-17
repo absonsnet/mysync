@@ -1,4 +1,4 @@
-# KeepSync
+# MySync
 
 > Sync tabs across Chrome and Firefox browsers with a self-hosted server
 
@@ -105,7 +105,7 @@ Open `.env` and change the following for local testing:
 DOMAIN=localhost:8787
 ALLOWED_ORIGINS=*
 JWT_SECRET=dev-secret-please-change-at-least-32-chars-long
-DATABASE_URL=./data/keepsync.db
+DATABASE_URL=./data/mysync.db
 
 # Enable dev mode so /auth/magic-link returns the device token directly
 # (no SMTP needed).
@@ -128,7 +128,7 @@ cd server && go run ./cmd
 
 ```bash
 # Option C — build a binary
-cd server && go build -o keepsync-server ./cmd && ./keepsync-server
+cd server && go build -o mysync-server ./cmd && ./mysync-server
 ```
 
 On first boot (empty database) the server prints a banner with a **one-time
@@ -137,7 +137,7 @@ again on subsequent restarts.
 
 ```
 ==============================================================
-  KeepSync Server — FIRST-DEVICE BOOTSTRAP
+  MySync Server — FIRST-DEVICE BOOTSTRAP
 ==============================================================
   Paste this token into the extension's "Invite token" field:
   beac748c663d988d2bc570f0d4b4dee290cdb8087caf863d
@@ -224,7 +224,7 @@ All settings are environment variables (see `.env.example` for the full list):
 | Variable | Default | Purpose |
 |---|---|---|
 | `SERVER_ADDRESS` | `:8787` | Listen address |
-| `DATABASE_URL` | `./data/keepsync.db` | SQLite path (or `postgres://...`) |
+| `DATABASE_URL` | `./data/mysync.db` | SQLite path (or `postgres://...`) |
 | `JWT_SECRET` | *(required, ≥32 chars)* | Signs device JWTs |
 | `DOMAIN` | — | Public hostname, used in magic-link URLs |
 | `ALLOWED_ORIGINS` | `*` | CORS allowlist (comma-separated) |

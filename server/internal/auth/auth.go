@@ -13,9 +13,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"keepsync-server/internal/config"
-	"keepsync-server/internal/models"
-	"keepsync-server/internal/storage"
+	"mysync-server/internal/config"
+	"mysync-server/internal/models"
+	"mysync-server/internal/storage"
 )
 
 // lastSeenThrottleInterval avoids hammering the devices row on every
@@ -682,7 +682,7 @@ func (s *Service) generateDeviceToken(userID, deviceID string) (string, time.Tim
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "keepsync-server",
+			Issuer:    "mysync-server",
 		},
 	}
 

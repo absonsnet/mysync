@@ -144,18 +144,18 @@
 
       if (applied === 0 && nQueued > 0 && eventsResponse.acknowledged) {
         logger.info(
-          '[KeepSync:history] doSync: event upload acknowledged; no new history row (server dedup / no-op)',
+          '[MySync:history] doSync: event upload acknowledged; no new history row (server dedup / no-op)',
           { queued: nQueued, conflicts }
         );
       } else if (applied > 0) {
-        logger.info('[KeepSync:history] doSync:queue cleared after upload', {
+        logger.info('[MySync:history] doSync:queue cleared after upload', {
           queued: nQueued,
           applied,
           conflicts
         });
       } else {
         logger.warn(
-          '[KeepSync:history] 0 events applied, queue not cleared — check service worker + server',
+          '[MySync:history] 0 events applied, queue not cleared — check service worker + server',
           { queued: nQueued, acknowledged: eventsResponse.acknowledged }
         );
       }
@@ -177,7 +177,7 @@
         sig === this._lastSnapshotSignature;
       if (skipSnapshot) {
         if (typeof logger !== 'undefined' && logger.info) {
-          logger.info('[KeepSync:sync] doSync: skip POST /tabs/snapshot (tab state unchanged since last upload)');
+          logger.info('[MySync:sync] doSync: skip POST /tabs/snapshot (tab state unchanged since last upload)');
         }
       } else {
         const snapshotResponse = await this.uploadSnapshotWithConflictRetry(
@@ -247,7 +247,7 @@
         logger.warn('Failed to fetch remote tabs:', error);
       }
     } else if (typeof logger !== 'undefined' && logger.info) {
-      logger.info('[KeepSync:sync] doSync: skip GET /tabs/current (throttled, nothing new to pull)');
+      logger.info('[MySync:sync] doSync: skip GET /tabs/current (throttled, nothing new to pull)');
     }
 
     // Step 4: Cache recent /history for the options page. Throttle: opening one
@@ -268,24 +268,24 @@
           this._lastHistoryCacheAt = Date.now();
           if (n > 0) {
             await this.storage.setHistoryEventsCache(hist.items);
-            logger.info('[KeepSync:history] doSync:cache updated', n, 'row(s) from GET /history');
+            logger.info('[MySync:history] doSync:cache updated', n, 'row(s) from GET /history');
           } else {
             logger.warn(
-              '[KeepSync:history] doSync:GET /history returned 0 items — if History is empty, visit a few http(s) pages and check POST /tabs/events (applied) in service worker'
+              '[MySync:history] doSync:GET /history returned 0 items — if History is empty, visit a few http(s) pages and check POST /tabs/events (applied) in service worker'
             );
           }
         } catch (e) {
-          logger.warn('[KeepSync:history] doSync: cache refresh failed', e);
+          logger.warn('[MySync:history] doSync: cache refresh failed', e);
         }
       } else if (typeof logger !== 'undefined' && logger.info) {
-        logger.info('[KeepSync:sync] doSync: skip GET /history (throttled, no new events this sync)');
+        logger.info('[MySync:sync] doSync: skip GET /history (throttled, no new events this sync)');
       }
 
       await this.maybeBackfillBrowserHistory({
         skipBecauseTabQueueFlushed: skipHistoryBackfillThisSync
       });
     } else if (typeof logger !== 'undefined' && logger.info) {
-      logger.info('[KeepSync:sync] doSync: skip history (historySyncEnabled=false)');
+      logger.info('[MySync:sync] doSync: skip history (historySyncEnabled=false)');
     }
 
     return result;
@@ -545,7 +545,7 @@
         return (await maybe) || [];
       }
     } catch (e) {
-      logger.warn('[KeepSync:history] history.search (promise) failed:', e);
+      logger.warn('[MySync:history] history.search (promise) failed:', e);
     }
     return await new Promise((resolve) => {
       try {
@@ -568,7 +568,7 @@
     if (opts.skipBecauseTabQueueFlushed === true) {
       if (typeof logger !== 'undefined' && logger.info) {
         logger.info(
-          '[KeepSync:history] skip browser backfill (tab event queue was flushed this sync)'
+          '[MySync:history] skip browser backfill (tab event queue was flushed this sync)'
         );
       }
       return;
@@ -629,7 +629,7 @@
         const chunk = events.slice(i, i + chunkSize);
         const resp = await this.apiClient.uploadEvents({ events: chunk });
         if (typeof logger !== 'undefined' && logger.info) {
-          logger.info('[KeepSync:history] backfill chunk', {
+          logger.info('[MySync:history] backfill chunk', {
             gapMs: now - lastAct,
             sent: chunk.length,
             applied: resp && resp.appliedCount
@@ -638,7 +638,7 @@
       }
       await this.storage.set('lastExtensionActivityAt', now);
     } catch (e) {
-      logger.warn('[KeepSync:history] backfill upload failed:', e);
+      logger.warn('[MySync:history] backfill upload failed:', e);
     }
   }
   }

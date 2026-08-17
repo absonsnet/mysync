@@ -944,7 +944,7 @@ class PopupController {
   }
 
   openHelp() {
-    ext.tabs.create({ url: 'https://github.com/keepsync/extension/wiki', active: true });
+    ext.tabs.create({ url: 'https://github.com/mysync/extension/wiki', active: true });
     window.close();
   }
 

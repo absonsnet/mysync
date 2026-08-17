@@ -44,7 +44,7 @@ type Config struct {
 func Load() (*Config, error) {
 	config := &Config{
 		ServerAddress:      getEnv("SERVER_ADDRESS", ":8787"),
-		DatabaseURL:        getEnv("DATABASE_URL", "./data/keepsync.db"),
+		DatabaseURL:        getEnv("DATABASE_URL", "./data/mysync.db"),
 		Domain:             getEnv("DOMAIN", ""),
 		SMTPHost:           getEnv("SMTP_HOST", ""),
 		SMTPPort:           getEnvInt("SMTP_PORT", 587),

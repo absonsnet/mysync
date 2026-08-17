@@ -12,10 +12,10 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
 
-	"keepsync-server/internal/auth"
-	"keepsync-server/internal/config"
-	"keepsync-server/internal/mailer"
-	"keepsync-server/internal/storage"
+	"mysync-server/internal/auth"
+	"mysync-server/internal/config"
+	"mysync-server/internal/mailer"
+	"mysync-server/internal/storage"
 )
 
 // Router represents the API router
@@ -34,7 +34,7 @@ var (
 	errorCount          int64
 	requestDurationSum  int64
 
-	// Version is injected at build time via -ldflags "-X keepsync-server/internal/api.Version=..."
+	// Version is injected at build time via -ldflags "-X mysync-server/internal/api.Version=..."
 	Version = "development"
 	// Commit is the short git SHA, injected at build time.
 	Commit = "unknown"
@@ -92,7 +92,7 @@ func (r *Router) setupRoutes() {
 	auth.HandleFunc("/activate", r.activateDevice).Methods("POST")
 	auth.HandleFunc("/pairing", r.createPairingCode).Methods("POST")
 	// Invite tokens are the SMTP-free bootstrap path.  Minted by the
-	// `keepsync-server invite` CLI and redeemed here.
+	// `mysync-server invite` CLI and redeemed here.
 	auth.HandleFunc("/invite", r.activateInvite).Methods("POST")
 
 	// /devices/register is intentionally NOT under the auth-required subrouter:
@@ -236,14 +236,14 @@ func (r *Router) metrics(w http.ResponseWriter, req *http.Request) {
 	if requestCount > 0 {
 		avg = requestDurationSum / requestCount
 	}
-	w.Write([]byte("# TYPE keepsync_requests_total counter\n"))
-	w.Write([]byte(fmt.Sprintf("keepsync_requests_total %d\n", requestCount)))
-	w.Write([]byte("# TYPE keepsync_request_errors_total counter\n"))
-	w.Write([]byte(fmt.Sprintf("keepsync_request_errors_total %d\n", errorCount)))
-	w.Write([]byte("# TYPE keepsync_request_duration_ms_sum counter\n"))
-	w.Write([]byte(fmt.Sprintf("keepsync_request_duration_ms_sum %d\n", requestDurationSum)))
-	w.Write([]byte("# TYPE keepsync_request_duration_ms_avg gauge\n"))
-	w.Write([]byte(fmt.Sprintf("keepsync_request_duration_ms_avg %d\n", avg)))
+	w.Write([]byte("# TYPE mysync_requests_total counter\n"))
+	w.Write([]byte(fmt.Sprintf("mysync_requests_total %d\n", requestCount)))
+	w.Write([]byte("# TYPE mysync_request_errors_total counter\n"))
+	w.Write([]byte(fmt.Sprintf("mysync_request_errors_total %d\n", errorCount)))
+	w.Write([]byte("# TYPE mysync_request_duration_ms_sum counter\n"))
+	w.Write([]byte(fmt.Sprintf("mysync_request_duration_ms_sum %d\n", requestDurationSum)))
+	w.Write([]byte("# TYPE mysync_request_duration_ms_avg gauge\n"))
+	w.Write([]byte(fmt.Sprintf("mysync_request_duration_ms_avg %d\n", avg)))
 }
 
 // requestLogger logs method/path/status for incoming requests.

@@ -1,4 +1,4 @@
-module keepsync-server
+module mysync-server
 
 go 1.21
 

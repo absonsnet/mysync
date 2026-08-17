@@ -1,4 +1,4 @@
-// Release-only webpack config for KeepSync extension.
+// Release-only webpack config for MySync extension.
 //
 // For local development you do NOT need this — the source tree under
 // ./extension is already a loadable unpacked extension. Use this config

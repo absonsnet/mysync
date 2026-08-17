@@ -90,7 +90,7 @@
     const raw = await this.authenticatedRequest('POST', '/tabs/events', payload);
     const out = this.normalizeEventsResponse(raw);
     if (typeof logger !== 'undefined' && logger.info) {
-      logger.info('[KeepSync:history] POST /tabs/events', {
+      logger.info('[MySync:history] POST /tabs/events', {
         sent: (payload && payload.events && payload.events.length) || 0,
         applied: out.appliedCount,
         conflicts: out.conflictsCreated,
@@ -120,12 +120,12 @@
 
     const raw = await this.authenticatedRequest('GET', url, null, {}, 15000);
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      logger.warn('[KeepSync:history] GET /history unexpected body', raw);
+      logger.warn('[MySync:history] GET /history unexpected body', raw);
       return { items: [], nextCursor: null };
     }
     const items = Array.isArray(raw.items) ? raw.items : [];
     if (typeof logger !== 'undefined' && logger.info) {
-      logger.info('[KeepSync:history] GET /history', {
+      logger.info('[MySync:history] GET /history', {
         count: items.length,
         deviceId: options.deviceId || null,
         limit: options.limit
@@ -332,8 +332,8 @@
                 : typeof globalThis !== 'undefined'
                   ? globalThis
                   : null;
-            if (g && typeof g.keepSyncNotifyDeviceRevoked === 'function') {
-              void Promise.resolve(g.keepSyncNotifyDeviceRevoked()).catch(() => {});
+            if (g && typeof g.mySyncNotifyDeviceRevoked === 'function') {
+              void Promise.resolve(g.mySyncNotifyDeviceRevoked()).catch(() => {});
             } else {
               const br =
                 typeof browser !== 'undefined' && browser.runtime ? browser : null;

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"keepsync-server/internal/models"
+	"mysync-server/internal/models"
 )
 
 const visitSessionGap = 30 * time.Minute

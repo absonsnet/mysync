@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"keepsync-server/internal/models"
+	"mysync-server/internal/models"
 )
 
 // uploadSnapshot handles POST /tabs/snapshot

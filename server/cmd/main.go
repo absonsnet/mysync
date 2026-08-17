@@ -16,10 +16,10 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"keepsync-server/internal/api"
-	"keepsync-server/internal/auth"
-	"keepsync-server/internal/config"
-	"keepsync-server/internal/storage"
+	"mysync-server/internal/api"
+	"mysync-server/internal/auth"
+	"mysync-server/internal/config"
+	"mysync-server/internal/storage"
 )
 
 func main() {
@@ -288,7 +288,7 @@ func printStartupBanner(cfg *config.Config, bootstrapToken string, bootstrapTTL 
 	const bar = "=============================================================="
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, bar)
-	fmt.Fprintln(os.Stderr, "  KeepSync Server")
+	fmt.Fprintln(os.Stderr, "  MySync Server")
 	fmt.Fprintln(os.Stderr, bar)
 	fmt.Fprintf(os.Stderr, "  Listening on:  %s  (bind %s)\n", url, addr)
 	fmt.Fprintf(os.Stderr, "  Health check:  %s/healthz\n", url)
@@ -320,7 +320,7 @@ func printStartupBanner(cfg *config.Config, bootstrapToken string, bootstrapTTL 
 		fmt.Fprintf(os.Stderr, "  Bootstrap invite not shown: %d paired device(s) remain in the database.\n", pairedDeviceCount)
 		fmt.Fprintln(os.Stderr, "  Clearing extension data does not remove server device rows.")
 		fmt.Fprintln(os.Stderr, "  To show a new first-device invite: delete the DB file, or run")
-		fmt.Fprintln(os.Stderr, "    keepsync-server unpair-all")
+		fmt.Fprintln(os.Stderr, "    mysync-server unpair-all")
 		fmt.Fprintln(os.Stderr, "  then restart the server.")
 		fmt.Fprintln(os.Stderr, bar)
 	}
@@ -341,16 +341,16 @@ func portOnly(addr string) string {
 }
 
 func printUsage() {
-	fmt.Println("keepsync-server — Cross-Browser Tab Sync API server")
+	fmt.Println("mysync-server — Cross-Browser Tab Sync API server")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  keepsync-server [serve]        Start the HTTP API server (default)")
-	fmt.Println("  keepsync-server migrate [up]   Apply database migrations")
-	fmt.Println("  keepsync-server migrate status Print schema/database status")
-	fmt.Println("  keepsync-server invite --email <addr> [--ttl 24h]")
+	fmt.Println("  mysync-server [serve]        Start the HTTP API server (default)")
+	fmt.Println("  mysync-server migrate [up]   Apply database migrations")
+	fmt.Println("  mysync-server migrate status Print schema/database status")
+	fmt.Println("  mysync-server invite --email <addr> [--ttl 24h]")
 	fmt.Println("                                    Mint a one-time invite token (no SMTP needed)")
-	fmt.Println("  keepsync-server unpair-all     Revoke all devices (then restart → bootstrap invite)")
-	fmt.Println("  keepsync-server help           Show this message")
+	fmt.Println("  mysync-server unpair-all     Revoke all devices (then restart → bootstrap invite)")
+	fmt.Println("  mysync-server help           Show this message")
 	fmt.Println()
 	fmt.Println("Configuration is read from environment variables; see .env.example.")
 }

@@ -12,7 +12,7 @@ function isBackgroundUnavailableError(err) {
 const OPTIONS_OPEN_TAB_KEY = 'optionsOpenTab';
 
 /** sessionStorage JSON: { [deviceId]: true } when that device's tab list is minimised */
-const TABS_DEVICE_COLLAPSED_KEY = 'keepsyncTabsDeviceCollapsed';
+const TABS_DEVICE_COLLAPSED_KEY = 'mysyncTabsDeviceCollapsed';
 
 /** Same logic as the popup: heartbeat-only updates should not re-fetch the whole page. */
 function isOnlyHeartbeatSyncStateChange(storageChange) {
@@ -1726,7 +1726,7 @@ class OptionsController {
       ) {
         if (typeof logger !== 'undefined' && logger.info) {
           logger.info(
-            '[KeepSync:history:options] skipped (background min-interval; open DevTools and Refresh for full load)'
+            '[MySync:history:options] skipped (background min-interval; open DevTools and Refresh for full load)'
           );
         }
         return;
@@ -1851,7 +1851,7 @@ class OptionsController {
       this.lastHistoryItems = items;
 
       if (typeof logger !== 'undefined' && logger.info) {
-        logger.info('[KeepSync:history:options] updateHistoryEvents', {
+        logger.info('[MySync:history:options] updateHistoryEvents', {
           background,
           fromCache,
           fromServer: !fromCache,
@@ -1876,7 +1876,7 @@ class OptionsController {
           if (fp === this._lastHistoryRenderFingerprint) {
             if (typeof logger !== 'undefined' && logger.info) {
               logger.info(
-                '[KeepSync:history:options] no-op UI (fingerprint match); press Refresh if you expect new events'
+                '[MySync:history:options] no-op UI (fingerprint match); press Refresh if you expect new events'
               );
             }
             return;
@@ -1909,7 +1909,7 @@ class OptionsController {
         if (fp === this._lastHistoryRenderFingerprint) {
           if (typeof logger !== 'undefined' && logger.info) {
             logger.info(
-              '[KeepSync:history:options] no-op UI (fingerprint match); press Refresh if you expect new events'
+              '[MySync:history:options] no-op UI (fingerprint match); press Refresh if you expect new events'
             );
           }
           return;
@@ -2920,7 +2920,7 @@ class OptionsController {
     const url = URL.createObjectURL(blob);
     await ext.downloads.download({
       url,
-      filename: 'keepsync-history.json',
+      filename: 'mysync-history.json',
       saveAs: true
     });
     URL.revokeObjectURL(url);
@@ -3170,7 +3170,7 @@ class OptionsController {
     if (!main || !btn) {
       return;
     }
-    const key = 'keepsyncOptionsSidebarCollapsed';
+    const key = 'mysyncOptionsSidebarCollapsed';
     const apply = (collapsed) => {
       main.classList.toggle('sidebar-collapsed', collapsed);
       btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -3829,7 +3829,7 @@ class OptionsController {
     }
     const blob = new Blob([JSON.stringify(this._histSessionsData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    void ext.downloads.download({ url, filename: 'keepsync-tab-sessions.json', saveAs: true });
+    void ext.downloads.download({ url, filename: 'mysync-tab-sessions.json', saveAs: true });
     URL.revokeObjectURL(url);
   }
 
@@ -3982,7 +3982,7 @@ class OptionsController {
       const data = await this.storage.exportData();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
-      void ext.downloads.download({ url, filename: 'keepsync-extension-backup.json', saveAs: true });
+      void ext.downloads.download({ url, filename: 'mysync-extension-backup.json', saveAs: true });
       URL.revokeObjectURL(url);
       this.showNotification('Export started');
     } catch (e) {

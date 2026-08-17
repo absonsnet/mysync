@@ -1,4 +1,4 @@
-// KeepSync Logger — wraps console with redaction + debug toggle.
+// MySync Logger — wraps console with redaction + debug toggle.
 // Load this script FIRST in every context (background, popup, options, offscreen)
 // so the global `logger` object is available to all downstream scripts.
 (function (globalScope) {

@@ -1,4 +1,4 @@
-# Caddyfile for KeepSync Server
+# Caddyfile for MySync Server
 # Automatic HTTPS with Let's Encrypt
 
 {
@@ -22,7 +22,7 @@
 # Main site
 {$DOMAIN:localhost} {
     # Reverse proxy to Go server
-    reverse_proxy keepsync-server:8787 {
+    reverse_proxy mysync-server:8787 {
         # SSE/WebSocket: avoid response buffering and long-stream quirks
         flush_interval -1
         # Health check
@@ -69,14 +69,14 @@
             }
         }
         
-        reverse_proxy keepsync-server:8787 {
+        reverse_proxy mysync-server:8787 {
             flush_interval -1
         }
     }
     
     # Logging
     log {
-        output file /var/log/caddy/keepsync.log {
+        output file /var/log/caddy/mysync.log {
             roll_size 100mb
             roll_keep 5
             roll_keep_for 720h
@@ -107,7 +107,7 @@
     
     # Metrics endpoint (for monitoring)
     handle /metrics {
-        reverse_proxy keepsync-server:8787 {
+        reverse_proxy mysync-server:8787 {
             flush_interval -1
         }
     }

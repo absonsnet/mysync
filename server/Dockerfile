@@ -16,7 +16,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o keepsync-server ./cmd
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o mysync-server ./cmd
 
 # Final stage
 FROM alpine:latest
@@ -31,7 +31,7 @@ WORKDIR /app
 RUN mkdir -p /app/data && chmod 755 /app/data
 
 # Copy binary from builder stage
-COPY --from=builder /app/keepsync-server .
+COPY --from=builder /app/mysync-server .
 
 # Create non-root user
 RUN addgroup -g 1001 appuser && \
@@ -49,4 +49,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8787/healthz || exit 1
 
 # Run the binary
-CMD ["./keepsync-server"]
+CMD ["./mysync-server"]

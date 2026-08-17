@@ -1,8 +1,8 @@
-# KeepSync Cross-Platform Makefile
+# MySync Cross-Platform Makefile
 # Supports Windows (PowerShell), Linux, and macOS
 
 # Variables
-BINARY_NAME := keepsync-server
+BINARY_NAME := mysync-server
 SERVER_DIR := server
 EXTENSION_DIR := extension
 DIST_DIR := dist
@@ -27,7 +27,7 @@ endif
 # Default target
 .PHONY: help
 help:
-	@echo "KeepSync Build System"
+	@echo "MySync Build System"
 	@echo "========================"
 	@echo ""
 	@echo "Available commands:"
@@ -59,7 +59,7 @@ build: server extension
 .PHONY: server
 server:
 	@echo "Building Go server..."
-	cd $(SERVER_DIR) && CGO_ENABLED=1 go build -ldflags "-X keepsync-server/internal/api.Version=$(VERSION) -X keepsync-server/internal/api.Commit=$(COMMIT)" -o $(BINARY_NAME)$(BINARY_EXT) ./cmd
+	cd $(SERVER_DIR) && CGO_ENABLED=1 go build -ldflags "-X mysync-server/internal/api.Version=$(VERSION) -X mysync-server/internal/api.Commit=$(COMMIT)" -o $(BINARY_NAME)$(BINARY_EXT) ./cmd
 
 .PHONY: extension
 extension:
@@ -136,8 +136,8 @@ dev-extension:
 .PHONY: docker
 docker:
 	@echo "Building Docker image..."
-	docker build -t keepsync-server:$(VERSION) ./$(SERVER_DIR)
-	docker tag keepsync-server:$(VERSION) keepsync-server:latest
+	docker build -t mysync-server:$(VERSION) ./$(SERVER_DIR)
+	docker tag mysync-server:$(VERSION) mysync-server:latest
 
 .PHONY: docker-run
 docker-run:
@@ -202,7 +202,7 @@ db-migrate:
 .PHONY: db-reset
 db-reset:
 	@echo "Resetting database..."
-	$(RM) $(SERVER_DIR)/data/keepsync.db*
+	$(RM) $(SERVER_DIR)/data/mysync.db*
 	$(MAKE) db-migrate
 
 # Cleanup targets
