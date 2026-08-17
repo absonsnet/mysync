@@ -252,11 +252,11 @@ no `import`/`require()`.
 
 ## Production Deployment
 
-> **⚠ The Docker Compose and Caddy setup is not fully tested. Use at your own risk.**
+> **⚠ The Docker Compose setup is not fully tested. Use at your own risk.**
 
 ```bash
 cp .env.example .env         # set real JWT_SECRET, DOMAIN, SMTP (optional)
-docker-compose up -d         # server + Caddy reverse proxy with HTTPS
+docker-compose up -d         # server only (configure your own Nginx proxy for HTTPS)
 ```
 
 ---
