@@ -5,6 +5,19 @@
     this.serverUrl = null;
     this.deviceToken = null;
     this.requestTimeout = 30000; // 30 seconds
+    /**
+     * Epoch ms until which the server has told us to back off (429 + Retry-After).
+     * Enforced here rather than in each caller because a dozen independent
+     * timers (fast loop, debounced tab events, alarms, SSE nudges, retries)
+     * all funnel through request() — gating any one of them is not enough.
+     */
+    this._rateLimitedUntil = 0;
+  }
+
+  /** ms remaining on the current server-imposed backoff, 0 when clear. */
+  rateLimitRemainingMs() {
+    const left = this._rateLimitedUntil - Date.now();
+    return left > 0 ? left : 0;
   }
 
   setServerUrl(url) {
@@ -271,6 +284,16 @@
       throw new Error('Server URL not configured');
     }
 
+    // Health checks are unauthenticated and unlimited; everything else waits
+    // out the window locally instead of spending another 429 to learn the same.
+    const gate = path === '/healthz' ? 0 : this.rateLimitRemainingMs();
+    if (gate > 0) {
+      const gated = new APIError('Rate limit exceeded', 429);
+      gated.rateLimited = true;
+      gated.retryAfterMs = gate;
+      throw gated;
+    }
+
     const url = `${this.serverUrl}${path}`;
     const headers = {
       'Content-Type': 'application/json',
@@ -313,6 +336,13 @@
           errorMessage = response.statusText || errorMessage;
         }
         const err = new APIError(errorMessage, response.status);
+        if (response.status === 429) {
+          const ra = parseInt(response.headers.get('Retry-After') || '', 10);
+          const waitMs = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 60000;
+          this._rateLimitedUntil = Date.now() + waitMs;
+          err.rateLimited = true;
+          err.retryAfterMs = waitMs;
+        }
         if (errorBody) {
           err.body = errorBody;
           if (errorBody.code) {
@@ -482,6 +512,10 @@
     /** @type {string|null} Server error code when present, e.g. device_revoked */
     this.code = null;
     this.deviceRevoked = false;
+    /** @type {boolean} Set for HTTP 429 (server or local gate) */
+    this.rateLimited = false;
+    /** @type {number} Suggested wait before retrying, from Retry-After */
+    this.retryAfterMs = 0;
   }
   }
 
