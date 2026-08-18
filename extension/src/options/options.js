@@ -158,6 +158,11 @@ class OptionsController {
       bookmarkSyncStatus: document.getElementById('bookmarkSyncStatus'),
       bookmarkConflictBox: document.getElementById('bookmarkConflictBox'),
       bookmarkConflictText: document.getElementById('bookmarkConflictText'),
+      bookmarkConflictTitle: document.getElementById('bookmarkConflictTitle'),
+      bookmarkConflictCounts: document.getElementById('bookmarkConflictCounts'),
+      bookmarkConflictLaterBtn: document.getElementById('bookmarkConflictLaterBtn'),
+      bookmarkLocalWinsNotice: document.getElementById('bookmarkLocalWinsNotice'),
+      serverOutdatedNotice: document.getElementById('serverOutdatedNotice'),
       bookmarkUseServerBtn: document.getElementById('bookmarkUseServerBtn'),
       bookmarkUseLocalBtn: document.getElementById('bookmarkUseLocalBtn'),
 
@@ -548,6 +553,18 @@ class OptionsController {
     this.elements.bookmarkSyncNowBtn?.addEventListener('click', () => this.performBookmarkSyncNow());
     this.elements.bookmarkUseServerBtn?.addEventListener('click', () => this.resolveBookmarkFromUI('use_server'));
     this.elements.bookmarkUseLocalBtn?.addEventListener('click', () => this.resolveBookmarkFromUI('use_local'));
+    this.elements.bookmarkConflictLaterBtn?.addEventListener('click', () => {
+      // Hide for this visit only; the conflict stays pending until resolved.
+      if (this.elements.bookmarkConflictBox) {
+        this.elements.bookmarkConflictBox.style.display = 'none';
+      }
+    });
+    document.getElementById('bookmarkKeepAutoOverwriteBtn')?.addEventListener('click', () =>
+      this.resolveLocalWinsNotice(true)
+    );
+    document.getElementById('bookmarkSwitchToPromptBtn')?.addEventListener('click', () =>
+      this.resolveLocalWinsNotice(false)
+    );
     document.getElementById('bookmarkTreeRefresh')?.addEventListener('click', () => this.refreshLocalBookmarkTree());
 
     const bmDetails = document.getElementById('bookmarkSyncSettingsDetails');
@@ -697,6 +714,8 @@ class OptionsController {
       this.elements.bookmarkDeletePolicy.value = config.bookmarkDeletePolicy || 'match_server';
     }
     await this.refreshBookmarkConflictUI();
+    await this.refreshLocalWinsNotice();
+    await this.refreshServerOutdatedNotice();
     await this.updateBookmarkBrowserSection();
   }
 
@@ -3515,12 +3534,107 @@ class OptionsController {
       if (det) {
         det.open = true;
       }
-      const sv = st.pendingConflict.server_version;
+      const p = st.pendingConflict;
+      const sv = p.server_version != null ? p.server_version : p.serverVersion;
+      const serverCount = Array.isArray(p.nodes) ? p.nodes.length : null;
+      const localCount = await this._countLocalBookmarks();
+
+      // Three different situations end up here and they are not equally
+      // alarming; calling all of them "conflict" teaches people to click
+      // through the one that matters.
+      let title = 'Pending conflict';
+      let text = `Server is at version ${sv}. Choose which copy to keep.`;
+      if (st.lastError === 'id_space_diverged') {
+        title = 'These two bookmark sets do not match';
+        text =
+          'Nothing on the server matches what is in this browser. That usually means the ' +
+          'extension was reinstalled, the server data was cleared, or this is the first sync ' +
+          'against another device. Nothing has been changed or deleted yet — choose which copy to keep.';
+      } else if (st.lastError === 'local_wins_needs_ack') {
+        title = 'Confirm overwriting the server';
+        text =
+          'Your settings say this browser always wins. Applying that would replace the server ' +
+          'copy with this one. Confirm below, or keep the server copy instead.';
+      }
+
+      if (this.elements.bookmarkConflictTitle) {
+        this.elements.bookmarkConflictTitle.textContent = title;
+      }
       if (this.elements.bookmarkConflictText) {
-        this.elements.bookmarkConflictText.textContent = `Server is at version ${sv}. Choose which copy to keep.`;
+        this.elements.bookmarkConflictText.textContent = text;
+      }
+      if (this.elements.bookmarkConflictCounts) {
+        const parts = [];
+        if (localCount != null) parts.push(`This browser: ${localCount} bookmarks`);
+        if (serverCount != null) parts.push(`Server: ${serverCount} bookmarks`);
+        this.elements.bookmarkConflictCounts.textContent = parts.join(' \u00b7 ');
       }
     } else {
       box.style.display = 'none';
+    }
+  }
+
+  /** Total nodes in the local tree, or null when the API is unavailable. */
+  async _countLocalBookmarks() {
+    try {
+      if (!ext.bookmarks || typeof ext.bookmarks.getTree !== 'function') {
+        return null;
+      }
+      const tree = await ext.bookmarks.getTree();
+      let n = 0;
+      const walk = (nodes) => {
+        for (const node of nodes || []) {
+          n++;
+          if (node.children) walk(node.children);
+        }
+      };
+      walk((tree && tree[0] && tree[0].children) || []);
+      return n;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * One-time prompt for users upgrading with automatic "local wins" already
+   * configured — that setting silently discarded another device's bookmarks,
+   * so it stays inert until they choose here.
+   */
+  async refreshLocalWinsNotice() {
+    const box = this.elements.bookmarkLocalWinsNotice;
+    if (!box) {
+      return;
+    }
+    const pending = await this.storage.get('bookmarkLocalWinsMigrationNotice', false);
+    box.style.display = pending ? 'block' : 'none';
+  }
+
+  async resolveLocalWinsNotice(keepAutomatic) {
+    if (keepAutomatic) {
+      await this.storage.setConfig({ bookmarkLocalWinsAcknowledged: true });
+      this.showNotification('This browser will keep overwriting the server automatically');
+    } else {
+      await this.storage.setConfig({ bookmarkConflictAction: 'prompt' });
+      this.showNotification('You will be asked on each bookmark conflict');
+    }
+    await this.storage.set('bookmarkLocalWinsMigrationNotice', false);
+    await this.refreshLocalWinsNotice();
+  }
+
+  /** Warn when the server predates reset-detection support. */
+  async refreshServerOutdatedNotice() {
+    const el = this.elements.serverOutdatedNotice;
+    if (!el) {
+      return;
+    }
+    const st = await this.storage.getSyncState();
+    if (st && st.serverEpochSupported === false) {
+      el.style.display = 'block';
+      el.textContent =
+        'This MySync server is older than the extension. It cannot report when its database has ' +
+        'been reset, so a wiped server may go unnoticed. Update the server to match.';
+    } else {
+      el.style.display = 'none';
     }
   }
 
@@ -3537,6 +3651,11 @@ class OptionsController {
     }
     if (st.lastError) {
       parts.push(`last: ${st.lastError}`);
+    }
+    const sync = await this.storage.getSyncState();
+    const pausedFor = Math.max(0, (sync?.rateLimitedUntil || 0) - Date.now());
+    if (pausedFor > 0) {
+      parts.push(`paused — server rate limit, retrying in ${Math.ceil(pausedFor / 1000)}s`);
     }
     el.textContent = parts.join(' · ') || '—';
   }

@@ -260,6 +260,23 @@ class PopupController {
       statusText.textContent = 'Browser offline';
       return;
     }
+    if (status.rateLimitedForMs > 0) {
+      // The server is up and answering — it is telling us to slow down. Saying
+      // nothing here makes a working extension look broken.
+      statusIndicator.classList.add('pending');
+      statusText.textContent = `Paused — retrying in ${Math.ceil(status.rateLimitedForMs / 1000)}s`;
+      statusText.setAttribute('title', 'The server is rate limiting this device. Syncing resumes automatically.');
+      return;
+    }
+    if (status.serverEpochSupported === false) {
+      statusIndicator.classList.add('pending');
+      statusText.textContent = 'Server needs updating';
+      statusText.setAttribute(
+        'title',
+        'This server is older than the extension and cannot report database resets. Update the MySync server.'
+      );
+      return;
+    }
     if (status.serverReachable === false) {
       statusIndicator.classList.add('server-down');
       statusText.textContent = 'Server unreachable';
@@ -754,7 +771,9 @@ class PopupController {
         online: typeof navigator !== 'undefined' ? navigator.onLine : true,
         serverReachable: syncState?.serverReachable,
         lastHeartbeatAt: syncState?.lastHeartbeatAt || null,
-        lastServerError: syncState?.lastServerError || null
+        lastServerError: syncState?.lastServerError || null,
+        rateLimitedForMs: Math.max(0, (syncState?.rateLimitedUntil || 0) - Date.now()),
+        serverEpochSupported: syncState?.serverEpochSupported !== false
       };
     }
   }
@@ -772,6 +791,12 @@ class PopupController {
       if (response.success) {
         await this.updateUI();
         this.hideLoading();
+        const r = response.result || {};
+        if (r.rateLimited) {
+          const secs = Math.ceil((r.retryAfterMs || 0) / 1000);
+          this.showError(`Server is rate limiting this device. Sync resumes automatically in ${secs}s.`);
+          return;
+        }
         this.showSuccessToast('Sync complete');
         return;
       }

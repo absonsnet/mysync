@@ -111,6 +111,18 @@ class BackgroundService {
       if (!connected) {
         await this.ext.action.setBadgeText({ text: '!' });
         await this.ext.action.setBadgeBackgroundColor({ color: '#e74c3c' });
+        return;
+      }
+
+      // States that are working but need a decision from the user: a bookmark
+      // conflict parked for review, or the one-time "local wins" confirmation.
+      const bmState = await this.storage.getBookmarkSyncState();
+      const needsAttention =
+        !!(bmState && bmState.pendingConflict) ||
+        (await this.storage.get('bookmarkLocalWinsMigrationNotice', false));
+      if (needsAttention) {
+        await this.ext.action.setBadgeText({ text: '?' });
+        await this.ext.action.setBadgeBackgroundColor({ color: '#f39c12' });
       } else {
         await this.ext.action.setBadgeText({ text: '' });
       }
@@ -326,6 +338,34 @@ class BackgroundService {
       await this.ext.runtime.openOptionsPage();
     } else if (details.reason === 'update') {
       await this.initIfNeeded();
+      await this.migrateLocalWinsSetting();
+    }
+  }
+
+  /**
+   * Automatic "local wins" used to overwrite the server without asking; it now
+   * requires a one-time acknowledgement. Users who deliberately chose that
+   * setting would otherwise just find bookmark sync quietly stopped, so raise
+   * a notice in options and badge the icon rather than failing silently.
+   */
+  async migrateLocalWinsSetting() {
+    try {
+      const c = await this.storage.getConfig();
+      const affected =
+        c.bookmarkConflictAction === 'auto_prefer' &&
+        c.bookmarkAutoResolution === 'local_wins' &&
+        c.bookmarkLocalWinsAcknowledged !== true;
+      if (!affected) {
+        return;
+      }
+      if (await this.storage.get('bookmarkLocalWinsMigrationNotice', false)) {
+        return;
+      }
+      await this.storage.set('bookmarkLocalWinsMigrationNotice', true);
+      await this.updateIconBadge();
+      logger.warn('Bookmark conflict setting "local wins" now needs a one-time confirmation');
+    } catch (e) {
+      logger.warn('migrateLocalWinsSetting:', e);
     }
   }
 
