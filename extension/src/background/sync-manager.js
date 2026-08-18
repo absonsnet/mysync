@@ -73,6 +73,9 @@
     const waitMs = this.apiClient.rateLimitRemainingMs();
     if (waitMs > 0) {
       logger.warn(`Rate limited; skipping sync for ${Math.ceil(waitMs / 1000)}s`);
+      // Persist the deadline so the popup can explain the pause even when the
+      // service worker is asleep and it has to read state from storage.
+      await this.storage.setSyncState({ rateLimitedUntil: Date.now() + waitMs });
       this.scheduleRetry(waitMs + 250);
       return { skipped: true, rateLimited: true, retryAfterMs: waitMs };
     }
@@ -101,7 +104,8 @@
         lastServerVersion: this.lastServerVersion || 0,
         serverReachable: true,
         lastHeartbeatAt: this.lastSyncTime.toISOString(),
-        lastServerError: null
+        lastServerError: null,
+        rateLimitedUntil: 0
       });
 
       logger.log('Sync completed successfully:', result);
@@ -332,7 +336,9 @@
       online: typeof navigator !== 'undefined' ? navigator.onLine : true,
       serverReachable: syncState?.serverReachable,
       lastHeartbeatAt: syncState?.lastHeartbeatAt || null,
-      lastServerError: syncState?.lastServerError || null
+      lastServerError: syncState?.lastServerError || null,
+      rateLimitedForMs: this.apiClient.rateLimitRemainingMs(),
+      serverEpochSupported: syncState?.serverEpochSupported !== false
     };
   }
 
@@ -377,8 +383,13 @@
    */
   async handleServerEpoch(epoch) {
     if (!epoch || typeof epoch !== 'string') {
+      // A server too old to report an epoch cannot tell us it was reset, and
+      // the guesswork that used to stand in for this has been removed. Record
+      // it so the UI can ask the user to update the server.
+      await this.storage.setSyncState({ serverEpochSupported: false });
       return false;
     }
+    await this.storage.setSyncState({ serverEpochSupported: true });
     const known = await this.storage.get('serverEpoch', null);
     if (known === epoch) {
       return false;
