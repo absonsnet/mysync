@@ -7,19 +7,52 @@
   /**
    * The permanent root folders ("Bookmarks bar", "Other bookmarks", …) have
    * different native ids in every browser and cannot be created, renamed, moved
-   * or deleted. Giving them well-known ids keyed by their position under the
-   * root lets Chrome and Firefox agree on where a node belongs, instead of each
+   * or deleted. Giving them well-known slot ids lets Chrome and Firefox agree
+   * on where a node belongs, instead of each
    * profile minting a random UUID for its own roots — which made every sync
    * re-create the other browser's roots as ordinary nested folders.
    */
   const ROOT_UUID_PREFIX = 'mysync-root-';
 
-  function rootUUID(index) {
-    return `${ROOT_UUID_PREFIX}${index}`;
+  /**
+   * Native root ids are fixed per browser, so match on those rather than on
+   * position under the root: Chrome has three roots and Firefox four, in a
+   * different order, and pairing them by index put Chrome's bookmarks bar
+   * opposite Firefox's Bookmarks Menu.
+   */
+  const ROOT_SLOT_BY_NATIVE = {
+    // Chrome / Edge
+    '1': 'toolbar',
+    '2': 'other',
+    '3': 'mobile',
+    // Firefox
+    toolbar_____: 'toolbar',
+    unfiled_____: 'other',
+    mobile______: 'mobile',
+    menu________: 'menu'
+  };
+
+  /** Titles seen on legacy synced roots, for the one-time migration below. */
+  const ROOT_SLOT_BY_TITLE = {
+    'bookmarks bar': 'toolbar',
+    'bookmarks toolbar': 'toolbar',
+    favorites: 'toolbar',
+    'favorites bar': 'toolbar',
+    'other bookmarks': 'other',
+    'bookmarks menu': 'menu',
+    'mobile bookmarks': 'mobile'
+  };
+
+  function rootUUID(slot) {
+    return `${ROOT_UUID_PREFIX}${slot}`;
   }
 
   function isRootUUID(id) {
     return typeof id === 'string' && id.startsWith(ROOT_UUID_PREFIX);
+  }
+
+  function rootSlotOf(id) {
+    return isRootUUID(id) ? id.slice(ROOT_UUID_PREFIX.length) : null;
   }
 
   /** Extract `{version}` from the several shapes putBookmarks has returned. */
@@ -376,8 +409,11 @@
       const children = root.children || [];
       for (let i = 0; i < children.length; i++) {
         const nid = String(children[i].id);
-        const uuid = rootUUID(i);
         protectedIds.add(nid);
+        // Unknown browsers fall back to position, which is at least stable
+        // within that profile.
+        const slot = ROOT_SLOT_BY_NATIVE[nid] || `pos${i}`;
+        const uuid = rootUUID(slot);
         const stale = nativeToUUID[nid];
         if (stale && stale !== uuid) {
           delete uuidToNative[stale];
@@ -386,6 +422,168 @@
         uuidToNative[uuid] = nid;
       }
       return protectedIds;
+    }
+
+    /**
+     * Resolve a server root id to a local folder. Firefox's Bookmarks Menu has
+     * no Chrome equivalent, so an unrepresented slot lands in "Other bookmarks"
+     * rather than being scattered into the toolbar.
+     */
+    _resolveRootParent(rootId, uuidToNative, topParentId) {
+      const direct = uuidToNative[rootId];
+      if (direct) {
+        return String(direct);
+      }
+      const other = uuidToNative[rootUUID('other')];
+      return other ? String(other) : topParentId;
+    }
+
+    /**
+     * One-time migration. Before roots had well-known ids each profile minted a
+     * random UUID for its own roots and pushed them as ordinary nodes, so the
+     * server still holds a top-level folder titled "Bookmarks bar" whose
+     * children point at it. Rewrite those children onto the real root and drop
+     * the placeholder, so the tree lands where it belongs instead of nesting a
+     * second bookmarks bar inside the first.
+     *
+     * @returns {{nodes: Array, changed: boolean}}
+     */
+    _normalizeLegacyRoots(nodes) {
+      const remap = new Map();
+      for (const n of nodes) {
+        if (!n || !n.id || isRootUUID(n.id)) {
+          continue;
+        }
+        const isTopLevel = n.parentId == null || n.parentId === '';
+        const isFolder = !n.url;
+        if (!isTopLevel || !isFolder) {
+          continue;
+        }
+        const slot = ROOT_SLOT_BY_TITLE[String(n.title || '').trim().toLowerCase()];
+        if (slot) {
+          remap.set(n.id, rootUUID(slot));
+        }
+      }
+      if (remap.size === 0) {
+        return { nodes, changed: false };
+      }
+      const out = [];
+      for (const n of nodes) {
+        if (!n || remap.has(n.id)) {
+          continue; // placeholder root: the local one already exists
+        }
+        const target = n.parentId != null ? remap.get(n.parentId) : null;
+        out.push(target ? { ...n, parentId: target } : n);
+      }
+      logger.info('Bookmark migration: rewrote', remap.size, 'legacy root folder(s)');
+      return { nodes: out, changed: true };
+    }
+
+    /**
+     * Re-link server nodes to local ones by where they sit and what they are,
+     * for the case where the two sides hold the same bookmarks under different
+     * ids: a reinstall (id maps live in extension storage and are lost), a
+     * cleared server, or a second device syncing for the first time. Without
+     * this every node looks new, so the tree is duplicated and the old copy
+     * swept as orphans.
+     *
+     * Matching is on the path from the root plus the URL (bookmarks) or title
+     * (folders), with an occurrence counter so duplicate siblings stay distinct.
+     *
+     * @returns {Promise<number>} nodes adopted
+     */
+    async _adoptByContent(nodes, nativeToUUID, uuidToNative) {
+      const unmapped = nodes.filter((n) => n && n.id && !uuidToNative[n.id]);
+      if (unmapped.length === 0) {
+        return 0;
+      }
+
+      const nodeKey = (title, url) => (url ? `u:${url}` : `f:${String(title || '')}`);
+
+      // --- local side: path key -> native id (ambiguous keys are dropped) ---
+      const localByKey = new Map();
+      const ambiguous = new Set();
+      let root = null;
+      try {
+        const t = await this.ext.bookmarks.getTree();
+        root = t && t[0];
+      } catch (e) {
+        return 0;
+      }
+      const walkLocal = (children, prefix) => {
+        const seen = new Map();
+        for (const c of children || []) {
+          const base = `${prefix}/${nodeKey(c.title, c.url)}`;
+          const n = (seen.get(base) || 0) + 1;
+          seen.set(base, n);
+          const key = `${base}#${n}`;
+          if (localByKey.has(key)) {
+            ambiguous.add(key);
+          } else {
+            localByKey.set(key, String(c.id));
+          }
+          if (c.children) {
+            walkLocal(c.children, key);
+          }
+        }
+      };
+      for (const r of (root && root.children) || []) {
+        const slot = ROOT_SLOT_BY_NATIVE[String(r.id)];
+        if (slot) {
+          walkLocal(r.children, `@${slot}`);
+        }
+      }
+
+      // --- server side: same keys, computed top-down ---
+      const childrenOf = new Map();
+      for (const n of nodes) {
+        if (!n || !n.id) continue;
+        const pid = n.parentId == null ? '' : n.parentId;
+        if (!childrenOf.has(pid)) childrenOf.set(pid, []);
+        childrenOf.get(pid).push(n);
+      }
+      for (const list of childrenOf.values()) {
+        list.sort((a, b) => (a.position || 0) - (b.position || 0));
+      }
+
+      let adopted = 0;
+      const walkServer = (parentId, prefix) => {
+        const seen = new Map();
+        for (const n of childrenOf.get(parentId) || []) {
+          const base = `${prefix}/${nodeKey(n.title, n.url)}`;
+          const c = (seen.get(base) || 0) + 1;
+          seen.set(base, c);
+          const key = `${base}#${c}`;
+          if (!uuidToNative[n.id] && !ambiguous.has(key)) {
+            const nid = localByKey.get(key);
+            // Only claim a local node that nothing else owns.
+            if (nid && !nativeToUUID[nid]) {
+              uuidToNative[n.id] = nid;
+              nativeToUUID[nid] = n.id;
+              adopted++;
+            }
+          }
+          walkServer(n.id, key);
+        }
+      };
+      let sawRoot = false;
+      for (const n of nodes) {
+        const slot = rootSlotOf(n && n.id);
+        if (slot) {
+          sawRoot = true;
+          walkServer(n.id, `@${slot}`);
+        }
+      }
+      if (!sawRoot) {
+        // Payload from a server that predates root slots: treat top level as
+        // "other" rather than leaving every node unmatched.
+        walkServer('', '@other');
+      }
+
+      if (adopted > 0) {
+        logger.info('Bookmark adoption: re-linked', adopted, 'existing node(s) by content');
+      }
+      return adopted;
     }
 
     async _applyFromServer(version, nodes, opts) {
@@ -407,6 +605,19 @@
 
       const protectedIds = await this._seedRootMappings(nativeToUUID, uuidToNative);
       const topParentId = await this.getDefaultParentId();
+
+      const legacy = this._normalizeLegacyRoots(nodes);
+      if (legacy.changed) {
+        nodes = legacy.nodes;
+        byId.clear();
+        for (const n of nodes) {
+          if (n && n.id) byId.set(n.id, n);
+        }
+      }
+
+      // Claim nodes we already hold under different ids *before* anything is
+      // created or swept, so a reinstall re-links instead of duplicating.
+      await this._adoptByContent(nodes, nativeToUUID, uuidToNative);
       const depthMemo = new Map();
       // `visiting` breaks parent cycles. The server rejects them now, but a
       // pre-fix database can still hold one and this recursion would not
@@ -458,7 +669,11 @@
         if (isRootUUID(n.id) || (local && protectedIds.has(local))) {
           continue;
         }
-        const parentIdForCreate = n.parentId && uuidToNative[n.parentId] ? String(uuidToNative[n.parentId]) : topParentId;
+        const parentIdForCreate = isRootUUID(n.parentId)
+          ? this._resolveRootParent(n.parentId, uuidToNative, topParentId)
+          : n.parentId && uuidToNative[n.parentId]
+            ? String(uuidToNative[n.parentId])
+            : topParentId;
 
         if (local) {
           try {
@@ -544,7 +759,17 @@
       }
 
       await this.storage.setBookmarkIdMaps({ nativeToUUID, uuidToNative });
-      await this.storage.setBookmarkSyncState({ lastServerVersion: version, lastSyncedAt: Date.now(), lastError: null, localDirty: false });
+      await this.storage.setBookmarkSyncState({
+        lastServerVersion: version,
+        lastSyncedAt: Date.now(),
+        lastError: null,
+        localDirty: legacy.changed
+      });
+      if (legacy.changed) {
+        // The server still holds the placeholder roots; upload the corrected
+        // tree once so other devices never see them again.
+        void this.push().catch((e) => logger.warn('Bookmark legacy-root push', e));
+      }
     }
 
     async _create(n, parentId, index, uuidToNative, nativeToUUID) {
