@@ -25,6 +25,8 @@
     this._lastRemoteTabsAt = 0;
     /** When true, doSync must not skip snapshot/history/remote throttles. */
     this._forceFullSync = false;
+    /** Last rate-limit deadline written to storage, to avoid redundant writes. */
+    this._persistedRateLimitUntil = 0;
   }
 
   async initialize() {
@@ -74,8 +76,15 @@
     if (waitMs > 0) {
       logger.warn(`Rate limited; skipping sync for ${Math.ceil(waitMs / 1000)}s`);
       // Persist the deadline so the popup can explain the pause even when the
-      // service worker is asleep and it has to read state from storage.
-      await this.storage.setSyncState({ rateLimitedUntil: Date.now() + waitMs });
+      // service worker is asleep and it has to read state from storage. Every
+      // caller lands here once a second during a pause, so only write when the
+      // deadline actually moves — otherwise this floods storage.onChanged and
+      // re-renders the options page on every tick.
+      const until = Date.now() + waitMs;
+      if (Math.abs(until - (this._persistedRateLimitUntil || 0)) > 1000) {
+        this._persistedRateLimitUntil = until;
+        await this.storage.setSyncState({ rateLimitedUntil: until });
+      }
       this.scheduleRetry(waitMs + 250);
       return { skipped: true, rateLimited: true, retryAfterMs: waitMs };
     }
@@ -107,6 +116,7 @@
         lastServerError: null,
         rateLimitedUntil: 0
       });
+      this._persistedRateLimitUntil = 0;
 
       logger.log('Sync completed successfully:', result);
       return result;
@@ -386,10 +396,10 @@
       // A server too old to report an epoch cannot tell us it was reset, and
       // the guesswork that used to stand in for this has been removed. Record
       // it so the UI can ask the user to update the server.
-      await this.storage.setSyncState({ serverEpochSupported: false });
+      await this._setEpochSupported(false);
       return false;
     }
-    await this.storage.setSyncState({ serverEpochSupported: true });
+    await this._setEpochSupported(true);
     const known = await this.storage.get('serverEpoch', null);
     if (known === epoch) {
       return false;
@@ -403,6 +413,15 @@
     this._lastSnapshotSignature = null;
     await this.storage.setSyncState({ lastServerVersion: 0 });
     return true;
+  }
+
+  /** Write only on change: the heartbeat calls this every minute. */
+  async _setEpochSupported(supported) {
+    const st = await this.storage.getSyncState();
+    if (st && st.serverEpochSupported === supported) {
+      return;
+    }
+    await this.storage.setSyncState({ serverEpochSupported: supported });
   }
 
   // Manual sync triggered by user
