@@ -77,37 +77,16 @@ func (r *Router) putBookmarks(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if _, err := tx.Exec(`DELETE FROM bookmark_nodes WHERE user_id = ?`, userID); err != nil {
-		log.Printf("putBookmarks: delete: %v", err)
-		writeError(w, "Database error", http.StatusInternalServerError)
+	clean, verr := validateBookmarkNodes(body.Nodes)
+	if verr != "" {
+		writeError(w, verr, http.StatusBadRequest)
 		return
 	}
 
-	for _, n := range body.Nodes {
-		if strings.TrimSpace(n.ID) == "" {
-			continue
-		}
-		var p sql.NullString
-		if n.ParentID != nil && strings.TrimSpace(*n.ParentID) != "" {
-			p = sql.NullString{String: strings.TrimSpace(*n.ParentID), Valid: true}
-		}
-		var u sql.NullString
-		if n.URL != nil {
-			trim := strings.TrimSpace(*n.URL)
-			if trim != "" {
-				u = sql.NullString{String: trim, Valid: true}
-			}
-		}
-		_, err := tx.Exec(`
-			INSERT INTO bookmark_nodes (id, user_id, parent_id, title, url, position)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			strings.TrimSpace(n.ID), userID, p, n.Title, u, n.Position,
-		)
-		if err != nil {
-			log.Printf("putBookmarks: insert node: %v", err)
-			writeError(w, "Database error", http.StatusInternalServerError)
-			return
-		}
+	if err := r.applyBookmarkNodes(tx, userID, clean); err != nil {
+		log.Printf("putBookmarks: apply nodes: %v", err)
+		writeError(w, "Database error", http.StatusInternalServerError)
+		return
 	}
 
 	newVer := serverVer + 1
@@ -161,4 +140,134 @@ func (r *Router) loadBookmarkNodes(tx *sql.Tx, userID string) ([]models.Bookmark
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// normalizedNode is a validated bookmark_nodes row ready to persist.
+type normalizedNode struct {
+	ID       string
+	ParentID sql.NullString
+	Title    string
+	URL      sql.NullString
+	Position int
+}
+
+// validateBookmarkNodes rejects payloads that would corrupt the tree: blank or
+// duplicate ids, parents that aren't in the same payload, and parent cycles.
+// Without this the server happily stores orphans and loops, which clients then
+// have to defend against while walking the tree.
+func validateBookmarkNodes(nodes []models.BookmarkNode) ([]normalizedNode, string) {
+	out := make([]normalizedNode, 0, len(nodes))
+	byID := make(map[string]string, len(nodes)) // id -> parent id ("" = root)
+
+	for _, n := range nodes {
+		id := strings.TrimSpace(n.ID)
+		if id == "" {
+			return nil, "Bookmark node is missing an id"
+		}
+		if _, dup := byID[id]; dup {
+			return nil, "Duplicate bookmark node id: " + id
+		}
+
+		var p sql.NullString
+		parent := ""
+		if n.ParentID != nil {
+			parent = strings.TrimSpace(*n.ParentID)
+		}
+		if parent != "" {
+			if parent == id {
+				return nil, "Bookmark node is its own parent: " + id
+			}
+			p = sql.NullString{String: parent, Valid: true}
+		}
+
+		var u sql.NullString
+		if n.URL != nil {
+			if trim := strings.TrimSpace(*n.URL); trim != "" {
+				u = sql.NullString{String: trim, Valid: true}
+			}
+		}
+
+		byID[id] = parent
+		out = append(out, normalizedNode{ID: id, ParentID: p, Title: n.Title, URL: u, Position: n.Position})
+	}
+
+	// Every non-root parent must be present, and walking upward must terminate.
+	for id := range byID {
+		seen := map[string]bool{id: true}
+		cur := byID[id]
+		for cur != "" {
+			parent, ok := byID[cur]
+			if !ok {
+				return nil, "Bookmark node references a missing parent: " + cur
+			}
+			if seen[cur] {
+				return nil, "Bookmark tree contains a parent cycle at: " + cur
+			}
+			seen[cur] = true
+			cur = parent
+		}
+	}
+
+	return out, ""
+}
+
+// applyBookmarkNodes reconciles the stored tree with the submitted one. The
+// previous implementation deleted every row and re-inserted the whole payload,
+// so renaming one bookmark rewrote thousands of rows; here we only touch what
+// actually differs. The wire format is unchanged — this is purely how the
+// full-tree PUT lands in the database.
+func (r *Router) applyBookmarkNodes(tx *sql.Tx, userID string, nodes []normalizedNode) error {
+	existing := make(map[string]normalizedNode)
+	rows, err := tx.Query(`SELECT id, parent_id, title, url, position FROM bookmark_nodes WHERE user_id = ?`, userID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cur normalizedNode
+		if err := rows.Scan(&cur.ID, &cur.ParentID, &cur.Title, &cur.URL, &cur.Position); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[cur.ID] = cur
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	incoming := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		incoming[n.ID] = true
+		prev, ok := existing[n.ID]
+		if ok && prev.ParentID == n.ParentID && prev.Title == n.Title && prev.URL == n.URL && prev.Position == n.Position {
+			continue
+		}
+		if ok {
+			_, err = tx.Exec(`
+				UPDATE bookmark_nodes SET parent_id = ?, title = ?, url = ?, position = ?
+				WHERE user_id = ? AND id = ?`,
+				n.ParentID, n.Title, n.URL, n.Position, userID, n.ID,
+			)
+		} else {
+			_, err = tx.Exec(`
+				INSERT INTO bookmark_nodes (id, user_id, parent_id, title, url, position)
+				VALUES (?, ?, ?, ?, ?, ?)`,
+				n.ID, userID, n.ParentID, n.Title, n.URL, n.Position,
+			)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	for id := range existing {
+		if incoming[id] {
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM bookmark_nodes WHERE user_id = ? AND id = ?`, userID, id); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

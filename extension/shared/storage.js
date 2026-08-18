@@ -26,6 +26,11 @@
       bookmarkConflictAction: 'prompt',
       /** server_wins | local_wins — used when bookmarkConflictAction is auto_prefer */
       bookmarkAutoResolution: 'server_wins',
+      /**
+       * Automatic local_wins silently discards the other device's tree, so it
+       * stays inert until the user confirms once (set by the conflict prompt).
+       */
+      bookmarkLocalWinsAcknowledged: false,
       /** match_server (remove locals missing from server) | keep_local */
       bookmarkDeletePolicy: 'match_server',
       /** When true (default), after sync recover gaps using browser history API. */

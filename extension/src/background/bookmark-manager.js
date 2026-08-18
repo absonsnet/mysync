@@ -4,6 +4,35 @@
 (function (globalScope) {
   const ext = typeof browser !== 'undefined' ? browser : chrome;
 
+  /**
+   * The permanent root folders ("Bookmarks bar", "Other bookmarks", …) have
+   * different native ids in every browser and cannot be created, renamed, moved
+   * or deleted. Giving them well-known ids keyed by their position under the
+   * root lets Chrome and Firefox agree on where a node belongs, instead of each
+   * profile minting a random UUID for its own roots — which made every sync
+   * re-create the other browser's roots as ordinary nested folders.
+   */
+  const ROOT_UUID_PREFIX = 'mysync-root-';
+
+  function rootUUID(index) {
+    return `${ROOT_UUID_PREFIX}${index}`;
+  }
+
+  function isRootUUID(id) {
+    return typeof id === 'string' && id.startsWith(ROOT_UUID_PREFIX);
+  }
+
+  /** Extract `{version}` from the several shapes putBookmarks has returned. */
+  function parseVersion(res) {
+    if (res == null) {
+      return 0;
+    }
+    if (typeof res === 'object') {
+      return Number(res.version) || 0;
+    }
+    return Number(res) || 0;
+  }
+
   function newUUID() {
     if (globalScope.crypto && typeof globalScope.crypto.randomUUID === 'function') {
       return globalScope.crypto.randomUUID();
@@ -144,6 +173,7 @@
       const out = [];
       const nativeToUUID = { ...(maps.nativeToUUID || {}) };
       const uuidToNative = { ...(maps.uuidToNative || {}) };
+      await this._seedRootMappings(nativeToUUID, uuidToNative);
 
       const visit = (nodes, _depth) => {
         if (!nodes) return;
@@ -232,10 +262,7 @@
           throw e;
         }
       }
-      const v =
-        res && typeof res === 'object' && res.version != null
-          ? res.version
-          : Number((res && res.version) != null ? res.version : res) || 0;
+      const v = parseVersion(res);
       await this.storage.setBookmarkSyncState({
         lastServerVersion: v,
         localDirty: false,
@@ -266,11 +293,19 @@
         });
         return null;
       }
-      if (act === 'use_local' || (act === 'auto_prefer' && cfg.bookmarkAutoResolution === 'local_wins')) {
+      // "local wins" is not a preference, it is a destructive overwrite: it
+      // discards whatever the other device pushed, unseen. An explicit
+      // use_local came from the conflict prompt, so it is already consented to.
+      // The automatic path needs a one-time acknowledgement first.
+      const autoLocal = act === 'auto_prefer' && cfg.bookmarkAutoResolution === 'local_wins';
+      if (act === 'use_local' || (autoLocal && cfg.bookmarkLocalWinsAcknowledged === true)) {
         const next = { ...body, base_version: conflict.server_version };
         return await this.api.putBookmarks(next);
       }
-      await this.storage.setBookmarkSyncState({ pendingConflict: conflict, lastError: 'version_conflict' });
+      await this.storage.setBookmarkSyncState({
+        pendingConflict: { ...conflict, overwritesServer: autoLocal },
+        lastError: autoLocal ? 'local_wins_needs_ack' : 'version_conflict'
+      });
       return null;
     }
 
@@ -320,24 +355,37 @@
     }
 
     /**
-     * Native ids that must never be removed: the root and its permanent
-     * children ("Bookmarks bar", "Other bookmarks", "Mobile bookmarks").
+     * Bind this profile's root folders to the well-known root ids, overwriting
+     * any random UUID a previous version assigned them. Mutates the maps in
+     * place and returns the protected native id set.
      */
-    async _protectedNativeIds() {
-      const out = new Set(['0']);
+    async _seedRootMappings(nativeToUUID, uuidToNative) {
+      const protectedIds = new Set(['0']);
+      let root = null;
       try {
         const t = await this.ext.bookmarks.getTree();
-        const root = t && t[0];
-        if (root) {
-          out.add(String(root.id));
-          for (const c of root.children || []) {
-            out.add(String(c.id));
-          }
-        }
+        root = t && t[0];
       } catch (e) {
         logger.warn('BookmarkManager: could not read root ids', e);
+        return protectedIds;
       }
-      return out;
+      if (!root) {
+        return protectedIds;
+      }
+      protectedIds.add(String(root.id));
+      const children = root.children || [];
+      for (let i = 0; i < children.length; i++) {
+        const nid = String(children[i].id);
+        const uuid = rootUUID(i);
+        protectedIds.add(nid);
+        const stale = nativeToUUID[nid];
+        if (stale && stale !== uuid) {
+          delete uuidToNative[stale];
+        }
+        nativeToUUID[nid] = uuid;
+        uuidToNative[uuid] = nid;
+      }
+      return protectedIds;
     }
 
     async _applyFromServer(version, nodes, opts) {
@@ -357,8 +405,13 @@
       const uuidToNative = { ...(maps.uuidToNative || {}) };
       const nativeToUUID = { ...(maps.nativeToUUID || {}) };
 
+      const protectedIds = await this._seedRootMappings(nativeToUUID, uuidToNative);
       const topParentId = await this.getDefaultParentId();
       const depthMemo = new Map();
+      // `visiting` breaks parent cycles. The server rejects them now, but a
+      // pre-fix database can still hold one and this recursion would not
+      // terminate — depthMemo is only written *after* the recursive call.
+      const visiting = new Set();
       const depth = (id) => {
         if (depthMemo.has(id)) {
           return depthMemo.get(id);
@@ -373,7 +426,14 @@
           depthMemo.set(id, 0);
           return 0;
         }
+        if (visiting.has(id)) {
+          logger.warn('Bookmark parent cycle detected at', id);
+          depthMemo.set(id, 999);
+          return 999;
+        }
+        visiting.add(id);
         const d = 1 + depth(p);
+        visiting.delete(id);
         depthMemo.set(id, d);
         return d;
       };
@@ -392,6 +452,12 @@
           continue;
         }
         const local = uuidToNative[n.id] ? String(uuidToNative[n.id]) : null;
+        // A root node from the other browser is already represented by this
+        // profile's own root at the same slot; there is nothing to create,
+        // rename or move, and attempting it throws.
+        if (isRootUUID(n.id) || (local && protectedIds.has(local))) {
+          continue;
+        }
         const parentIdForCreate = n.parentId && uuidToNative[n.parentId] ? String(uuidToNative[n.parentId]) : topParentId;
 
         if (local) {
@@ -428,7 +494,9 @@
 
       if (deleteOrphans) {
         const serverSet = new Set(nodes.map((x) => x && x.id).filter(Boolean));
-        const mapped = Object.keys(uuidToNative);
+        // Roots are always mapped and always present; they'd mask a genuine
+        // divergence, so judge overlap on real content only.
+        const mapped = Object.keys(uuidToNative).filter((u) => !isRootUUID(u));
         const overlap = mapped.filter((u) => serverSet.has(u)).length;
 
         // The sweep assumes "mapped locally but absent from the server" means
@@ -447,7 +515,6 @@
             pendingConflict: { server_version: version, nodes }
           });
         } else {
-          const protectedIds = await this._protectedNativeIds();
           for (const u of mapped) {
             if (serverSet.has(u)) {
               continue;
@@ -517,12 +584,14 @@
         return { ok: true };
       }
       if (choice === 'use_local' || choice === 'local') {
+        // Choosing this at the prompt is the acknowledgement that unblocks the
+        // automatic local_wins path for later conflicts.
+        await this.storage.setConfig({ bookmarkLocalWinsAcknowledged: true });
         const { nodes } = await this.buildNodesForServer();
         const sv = p.serverVersion != null ? p.serverVersion : p.server_version;
         const body = { base_version: sv, nodes };
         const res = await this.api.putBookmarks(body);
-        const ver = res && (res.version != null ? res.version : res);
-        const v = typeof ver === 'object' && ver && ver.version != null ? ver.version : Number(ver) || 0;
+        const v = parseVersion(res);
         await this.storage.setBookmarkSyncState({
           lastServerVersion: v,
           localDirty: false,

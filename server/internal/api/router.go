@@ -27,6 +27,8 @@ type Router struct {
 	authService *auth.Service
 	mailer      *mailer.Mailer
 	rateLimiter *rateLimiter
+	// serverEpoch identifies this database instance; see storage.EnsureServerEpoch.
+	serverEpoch string
 }
 
 var (
@@ -50,6 +52,14 @@ func NewRouter(db *storage.DB, cfg *config.Config) http.Handler {
 		authService: auth.NewService(db, cfg),
 		mailer:      mailer.New(cfg),
 		rateLimiter: newRateLimiter(cfg.RateLimitPerMinute, time.Minute),
+	}
+
+	// Best effort: an unreadable epoch just means clients skip the reset check
+	// rather than the server failing to boot.
+	if epoch, err := storage.EnsureServerEpoch(db); err != nil {
+		log.Printf("NewRouter: server epoch unavailable: %v", err)
+	} else {
+		r.serverEpoch = epoch
 	}
 
 	r.setupRoutes()
@@ -223,8 +233,9 @@ func (r *Router) healthCheck(w http.ResponseWriter, req *http.Request) {
 		v = fmt.Sprintf("%s (%s)", Version, Commit)
 	}
 	writeJSON(w, map[string]string{
-		"status":  "ok",
-		"version": v,
+		"status":       "ok",
+		"version":      v,
+		"server_epoch": r.serverEpoch,
 	})
 }
 
