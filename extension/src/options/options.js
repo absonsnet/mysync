@@ -163,6 +163,8 @@ class OptionsController {
       bookmarkConflictLaterBtn: document.getElementById('bookmarkConflictLaterBtn'),
       bookmarkLocalWinsNotice: document.getElementById('bookmarkLocalWinsNotice'),
       serverOutdatedNotice: document.getElementById('serverOutdatedNotice'),
+      bookmarkTrashBox: document.getElementById('bookmarkTrashBox'),
+      bookmarkTrashSummary: document.getElementById('bookmarkTrashSummary'),
       bookmarkUseServerBtn: document.getElementById('bookmarkUseServerBtn'),
       bookmarkUseLocalBtn: document.getElementById('bookmarkUseLocalBtn'),
 
@@ -565,6 +567,7 @@ class OptionsController {
     document.getElementById('bookmarkSwitchToPromptBtn')?.addEventListener('click', () =>
       this.resolveLocalWinsNotice(false)
     );
+    document.getElementById('bookmarkRestoreTrashBtn')?.addEventListener('click', () => this.restoreBookmarkTrash());
     document.getElementById('bookmarkTreeRefresh')?.addEventListener('click', () => this.refreshLocalBookmarkTree());
 
     const bmDetails = document.getElementById('bookmarkSyncSettingsDetails');
@@ -716,6 +719,7 @@ class OptionsController {
     await this.refreshBookmarkConflictUI();
     await this.refreshLocalWinsNotice();
     await this.refreshServerOutdatedNotice();
+    await this.refreshBookmarkTrashBox();
     await this.updateBookmarkBrowserSection();
   }
 
@@ -3637,6 +3641,44 @@ class OptionsController {
     }
     await this.storage.set('bookmarkLocalWinsMigrationNotice', false);
     await this.refreshLocalWinsNotice();
+  }
+
+  /** Offer to undo bookmarks a sync removed, while they are still in the window. */
+  async refreshBookmarkTrashBox() {
+    const box = this.elements.bookmarkTrashBox;
+    if (!box) {
+      return;
+    }
+    try {
+      const r = await ext.runtime.sendMessage({ type: 'BOOKMARK_TRASH_SUMMARY' });
+      const sum = (r && r.summary) || { items: 0 };
+      if (!sum.items) {
+        box.style.display = 'none';
+        return;
+      }
+      box.style.display = 'block';
+      const when = sum.newestAt ? new Date(sum.newestAt).toLocaleString() : 'recently';
+      this.elements.bookmarkTrashSummary.textContent =
+        `${sum.items} bookmark(s) were removed by sync (most recently ${when}). ` +
+        'They can be restored for 30 days.';
+    } catch (e) {
+      box.style.display = 'none';
+    }
+  }
+
+  async restoreBookmarkTrash() {
+    try {
+      const r = await ext.runtime.sendMessage({ type: 'BOOKMARK_RESTORE_TRASH' });
+      if (r && r.success) {
+        this.showNotification(`Restored ${r.restored} bookmark(s) into a new folder`);
+      } else {
+        this.showNotification((r && r.error) || 'Could not restore');
+      }
+      await this.refreshBookmarkTrashBox();
+      await this.refreshLocalBookmarkTree();
+    } catch (e) {
+      this.showNotification((e && e.message) || String(e));
+    }
   }
 
   /** Warn when the server predates reset-detection support. */

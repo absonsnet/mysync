@@ -14,6 +14,10 @@
    */
   const ROOT_UUID_PREFIX = 'mysync-root-';
 
+  /** Undo window for sync-initiated deletions. */
+  const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  const TRASH_MAX_BATCHES = 20;
+
   /**
    * Native root ids are fixed per browser, so match on those rather than on
    * position under the root: Chrome has three roots and Firefox four, in a
@@ -274,8 +278,65 @@
       }
     }
 
+    /**
+     * Repair a node list before it goes to the server: drop blank ids and
+     * duplicates, re-parent orphans onto the nearest surviving ancestor, and
+     * root the shallowest member of any parent cycle. The server rejects all
+     * three with a 400, and a browser profile in a strange state would
+     * otherwise retry that rejection forever with no way out.
+     */
+    _sanitizeNodes(nodes) {
+      const byId = new Map();
+      const clean = [];
+      let repaired = 0;
+
+      for (const n of nodes) {
+        if (!n || !n.id || String(n.id).trim() === '') {
+          repaired++;
+          continue;
+        }
+        const id = String(n.id);
+        if (byId.has(id)) {
+          repaired++;
+          continue;
+        }
+        const node = { ...n, id };
+        byId.set(id, node);
+        clean.push(node);
+      }
+
+      for (const n of clean) {
+        if (n.parentId == null || n.parentId === '') {
+          n.parentId = null;
+          continue;
+        }
+        // Walk up; root the node if the chain leaves the set or loops.
+        const seen = new Set([n.id]);
+        let cur = n.parentId;
+        let ok = true;
+        while (cur != null && cur !== '') {
+          if (seen.has(cur) || !byId.has(cur)) {
+            ok = false;
+            break;
+          }
+          seen.add(cur);
+          cur = byId.get(cur).parentId;
+        }
+        if (!ok) {
+          n.parentId = null;
+          repaired++;
+        }
+      }
+
+      if (repaired > 0) {
+        logger.warn('Bookmark sanitise: repaired', repaired, 'malformed node(s) before upload');
+      }
+      return clean;
+    }
+
     async _doPush() {
-      const { nodes } = await this.buildNodesForServer();
+      const built = await this.buildNodesForServer();
+      const nodes = this._sanitizeNodes(built.nodes);
       const st = await this.storage.getBookmarkSyncState();
       const body = {
         base_version: st.lastServerVersion != null ? st.lastServerVersion : 0,
@@ -730,22 +791,32 @@
             pendingConflict: { server_version: version, nodes }
           });
         } else {
-          for (const u of mapped) {
-            if (serverSet.has(u)) {
-              continue;
-            }
-            const nid = uuidToNative[u];
-            if (nid && !protectedIds.has(String(nid))) {
-              try {
-                // remove() rejects on non-empty folders; removeTree() covers both.
-                await this.ext.bookmarks.removeTree(String(nid));
-              } catch (e) {
-                logger.warn('Bookmark orphan remove', e);
+          const doomed = mapped.filter((u) => !serverSet.has(u));
+          // The zero-overlap check above catches total divergence, but not a
+          // bug that would take most of a tree with it. Anything past half is
+          // not a sync, it is an accident — park it for a human instead.
+          if (mapped.length >= 10 && doomed.length > mapped.length / 2) {
+            logger.warn('Bookmark orphan sweep aborted: would remove', doomed.length, 'of', mapped.length);
+            await this.storage.setBookmarkSyncState({
+              lastError: 'bulk_delete_blocked',
+              pendingConflict: { server_version: version, nodes }
+            });
+          } else {
+            for (const u of doomed) {
+              const nid = uuidToNative[u];
+              if (nid && !protectedIds.has(String(nid))) {
+                await this._trashSubtree(String(nid));
+                try {
+                  // remove() rejects on non-empty folders; removeTree() covers both.
+                  await this.ext.bookmarks.removeTree(String(nid));
+                } catch (e) {
+                  logger.warn('Bookmark orphan remove', e);
+                }
               }
-            }
-            delete uuidToNative[u];
-            if (nid && nativeToUUID[nid]) {
-              delete nativeToUUID[nid];
+              delete uuidToNative[u];
+              if (nid && nativeToUUID[nid]) {
+                delete nativeToUUID[nid];
+              }
             }
           }
         }
@@ -770,6 +841,100 @@
         // tree once so other devices never see them again.
         void this.push().catch((e) => logger.warn('Bookmark legacy-root push', e));
       }
+    }
+
+    /**
+     * Record a subtree before deleting it, so a sync that removes the wrong
+     * thing is an annoyance rather than a loss. Capped and time-limited; this
+     * is an undo window, not a second copy of the user's bookmarks.
+     */
+    async _trashSubtree(nativeId) {
+      try {
+        const sub = await this.ext.bookmarks.getSubTree(nativeId);
+        const items = [];
+        const flatten = (node, path) => {
+          if (!node) return;
+          const here = path ? `${path}/${node.title || ''}` : node.title || '';
+          if (node.url) {
+            items.push({ title: node.title || '', url: node.url, path });
+          }
+          for (const c of node.children || []) {
+            flatten(c, here);
+          }
+        };
+        for (const node of sub || []) {
+          flatten(node, '');
+        }
+        if (items.length === 0) {
+          return;
+        }
+        const trash = await this.storage.get('bookmarkTrash', []);
+        const cutoff = Date.now() - TRASH_TTL_MS;
+        const kept = (Array.isArray(trash) ? trash : []).filter((e) => e && e.deletedAt > cutoff);
+        kept.push({ deletedAt: Date.now(), items });
+        await this.storage.set('bookmarkTrash', kept.slice(-TRASH_MAX_BATCHES));
+      } catch (e) {
+        logger.warn('Bookmark trash capture failed', e);
+      }
+    }
+
+    /** Recreate everything still inside the undo window, into "Other bookmarks". */
+    async restoreTrash() {
+      const trash = await this.storage.get('bookmarkTrash', []);
+      const cutoff = Date.now() - TRASH_TTL_MS;
+      const batches = (Array.isArray(trash) ? trash : []).filter((e) => e && e.deletedAt > cutoff);
+      if (batches.length === 0) {
+        return { ok: true, restored: 0 };
+      }
+      const maps = await this.storage.getBookmarkIdMaps();
+      const uuidToNative = { ...(maps.uuidToNative || {}) };
+      const nativeToUUID = { ...(maps.nativeToUUID || {}) };
+      await this._seedRootMappings(nativeToUUID, uuidToNative);
+      const parentId = this._resolveRootParent(
+        rootUUID('other'),
+        uuidToNative,
+        await this.getDefaultParentId()
+      );
+
+      let restored = 0;
+      this._applying = true;
+      try {
+        const folder = await this.ext.bookmarks.create({
+          parentId,
+          title: `Restored bookmarks ${new Date().toLocaleDateString()}`
+        });
+        for (const batch of batches) {
+          for (const it of batch.items || []) {
+            try {
+              await this.ext.bookmarks.create({
+                parentId: String(folder.id),
+                title: it.path ? `${it.path} — ${it.title}` : it.title,
+                url: it.url
+              });
+              restored++;
+            } catch (e) {
+              logger.warn('Bookmark restore item failed', e);
+            }
+          }
+        }
+      } finally {
+        setTimeout(() => {
+          this._applying = false;
+        }, 3000);
+      }
+      await this.storage.set('bookmarkTrash', []);
+      return { ok: true, restored };
+    }
+
+    async trashSummary() {
+      const trash = await this.storage.get('bookmarkTrash', []);
+      const cutoff = Date.now() - TRASH_TTL_MS;
+      const batches = (Array.isArray(trash) ? trash : []).filter((e) => e && e.deletedAt > cutoff);
+      return {
+        batches: batches.length,
+        items: batches.reduce((n, b) => n + ((b.items && b.items.length) || 0), 0),
+        newestAt: batches.length ? Math.max(...batches.map((b) => b.deletedAt)) : null
+      };
     }
 
     async _create(n, parentId, index, uuidToNative, nativeToUUID) {
@@ -812,7 +977,8 @@
         // Choosing this at the prompt is the acknowledgement that unblocks the
         // automatic local_wins path for later conflicts.
         await this.storage.setConfig({ bookmarkLocalWinsAcknowledged: true });
-        const { nodes } = await this.buildNodesForServer();
+        const built = await this.buildNodesForServer();
+        const nodes = this._sanitizeNodes(built.nodes);
         const sv = p.serverVersion != null ? p.serverVersion : p.server_version;
         const body = { base_version: sv, nodes };
         const res = await this.api.putBookmarks(body);
