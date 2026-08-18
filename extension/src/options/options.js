@@ -3574,6 +3574,13 @@ class OptionsController {
     }
   }
 
+  _openBookmarkSettings() {
+    const det = document.getElementById('bookmarkSyncSettingsDetails');
+    if (det) {
+      det.open = true;
+    }
+  }
+
   /** Total nodes in the local tree, or null when the API is unavailable. */
   async _countLocalBookmarks() {
     try {
@@ -3607,6 +3614,11 @@ class OptionsController {
     }
     const pending = await this.storage.get('bookmarkLocalWinsMigrationNotice', false);
     box.style.display = pending ? 'block' : 'none';
+    // The whole panel lives inside a collapsible section; a notice nobody can
+    // see is the same as no notice.
+    if (pending) {
+      this._openBookmarkSettings();
+    }
   }
 
   async resolveLocalWinsNotice(keepAutomatic) {
@@ -3615,6 +3627,12 @@ class OptionsController {
       this.showNotification('This browser will keep overwriting the server automatically');
     } else {
       await this.storage.setConfig({ bookmarkConflictAction: 'prompt' });
+      // The dropdown still shows the old value, and saveBookmarkSettings()
+      // writes every bookmark select back together — so touching any other
+      // bookmark setting would silently restore auto_prefer and undo this.
+      if (this.elements.bookmarkConflictAction) {
+        this.elements.bookmarkConflictAction.value = 'prompt';
+      }
       this.showNotification('You will be asked on each bookmark conflict');
     }
     await this.storage.set('bookmarkLocalWinsMigrationNotice', false);
@@ -3630,6 +3648,7 @@ class OptionsController {
     const st = await this.storage.getSyncState();
     if (st && st.serverEpochSupported === false) {
       el.style.display = 'block';
+      this._openBookmarkSettings();
       el.textContent =
         'This MySync server is older than the extension. It cannot report when its database has ' +
         'been reset, so a wiped server may go unnoticed. Update the server to match.';
