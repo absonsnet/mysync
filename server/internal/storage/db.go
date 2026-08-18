@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,6 +70,7 @@ func Migrate(db *DB) error {
 		createAuthTokensTable,
 		createBookmarkStateTable,
 		createBookmarkNodesTable,
+		createServerMetaTable,
 		createIndices,
 	}
 
@@ -247,3 +250,40 @@ CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires ON auth_tokens (expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_bookmark_nodes_user_id ON bookmark_nodes (user_id);
 `
+
+// server_meta holds installation-scoped values that must survive restarts but
+// are regenerated when the database is recreated from scratch.
+const createServerMetaTable = `
+CREATE TABLE IF NOT EXISTS server_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);`
+
+// EnsureServerEpoch returns a stable identifier for this database. It is
+// generated on first use and destroyed with the file, so a client that sees a
+// different epoch than it last recorded knows the server was reset — rather
+// than inferring it from an empty incremental pull, which is indistinguishable
+// from "nothing changed".
+func EnsureServerEpoch(db *DB) (string, error) {
+	var epoch string
+	err := db.QueryRow(`SELECT value FROM server_meta WHERE key = 'server_epoch'`).Scan(&epoch)
+	if err == nil && epoch != "" {
+		return epoch, nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	epoch = hex.EncodeToString(buf)
+	if _, err := db.Exec(`INSERT OR IGNORE INTO server_meta (key, value) VALUES ('server_epoch', ?)`, epoch); err != nil {
+		return "", err
+	}
+	// Re-read: a concurrent starter may have won the INSERT.
+	if err := db.QueryRow(`SELECT value FROM server_meta WHERE key = 'server_epoch'`).Scan(&epoch); err != nil {
+		return "", err
+	}
+	return epoch, nil
+}

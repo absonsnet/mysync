@@ -245,21 +245,12 @@
         const remoteTabsResponse = await this.apiClient.getCurrentTabs(sincePull);
         this._lastRemoteTabsAt = Date.now();
         if (remoteTabsResponse && remoteTabsResponse.devices) {
-          let incoming = remoteTabsResponse.devices;
-          // Server DB reset detection: incremental pull returns 0 devices
-          // but we have cached entries — retry with since=0 for a full pull.
-          if (incoming.length === 0 && sincePull > 0) {
-            const cached = (await this.storage.getRemoteTabs()) || [];
-            if (cached.length > 0) {
-              const fullResponse = await this.apiClient.getCurrentTabs(0);
-              if (fullResponse && fullResponse.devices) {
-                incoming = fullResponse.devices;
-                // Reset server version since the server clearly has a lower version space
-                this.lastServerVersion = 0;
-              }
-            }
-          }
-          const mergedDevices = await this.mergeRemoteTabs(incoming, incoming === remoteTabsResponse.devices ? sincePull : 0);
+          const incoming = remoteTabsResponse.devices;
+          // An empty incremental pull used to be treated as a server reset and
+          // reset lastServerVersion to 0. It is indistinguishable from "nothing
+          // changed", which is the common case. Real resets are now detected
+          // from the server epoch in handleServerEpoch().
+          const mergedDevices = await this.mergeRemoteTabs(incoming, sincePull);
           result.remoteTabs = mergedDevices.reduce(
             (total, device) => total + device.tabs.length,
             0
@@ -358,7 +349,8 @@
     this.apiClient.setServerUrl(config.serverUrl);
     const now = new Date().toISOString();
     try {
-      await this.apiClient.healthCheck();
+      const health = await this.apiClient.healthCheck();
+      await this.handleServerEpoch(health && health.server_epoch);
       await this.storage.setSyncState({
         serverReachable: true,
         lastHeartbeatAt: now,
@@ -376,8 +368,34 @@
     }
   }
 
+  /**
+   * The server reports a per-database epoch on /healthz. A change means the
+   * database was recreated, so our version cursor no longer means anything and
+   * must restart at 0. Previously this was *inferred* from an incremental pull
+   * returning no devices — which is also exactly what "nothing changed" looks
+   * like, so a normal quiet period could be misread as a wipe.
+   */
+  async handleServerEpoch(epoch) {
+    if (!epoch || typeof epoch !== 'string') {
+      return false;
+    }
+    const known = await this.storage.get('serverEpoch', null);
+    if (known === epoch) {
+      return false;
+    }
+    await this.storage.set('serverEpoch', epoch);
+    if (!known) {
+      return false; // First time we've seen any epoch — nothing to reset.
+    }
+    logger.warn('Server epoch changed; server database was reset. Restarting version cursor.');
+    this.lastServerVersion = 0;
+    this._lastSnapshotSignature = null;
+    await this.storage.setSyncState({ lastServerVersion: 0 });
+    return true;
+  }
+
   // Manual sync triggered by user
-  async forcSync() {
+  async forceSync() {
     logger.log('Manual sync requested');
     
     // Clear any pending debounced sync
@@ -673,6 +691,10 @@
     }
   }
   }
+
+  // Kept as an alias: the method shipped misspelled and may be referenced by
+  // callers outside this bundle.
+  SyncManager.prototype.forcSync = SyncManager.prototype.forceSync;
 
   globalScope.SyncManager = SyncManager;
 })(typeof self !== 'undefined' ? self : window);
