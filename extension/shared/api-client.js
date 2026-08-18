@@ -12,6 +12,8 @@
      * all funnel through request() — gating any one of them is not enough.
      */
     this._rateLimitedUntil = 0;
+    /** Most recent X-Server-Epoch seen; see SyncManager.handleServerEpoch. */
+    this.observedServerEpoch = null;
   }
 
   /** ms remaining on the current server-imposed backoff, 0 when clear. */
@@ -317,7 +319,14 @@
 
     try {
       const response = await fetch(url, options);
-      
+
+      // Stamped on every response, so a database reset is visible on the next
+      // request rather than the next heartbeat.
+      const epoch = response.headers.get('X-Server-Epoch');
+      if (epoch) {
+        this.observedServerEpoch = epoch;
+      }
+
       if (!response.ok) {
         let errorMessage = `HTTP ${response.status}`;
         let errorBody = null;

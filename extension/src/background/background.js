@@ -462,6 +462,24 @@ class BackgroundService {
           break;
         }
 
+        case 'BOOKMARK_TRASH_SUMMARY': {
+          const summary = this.bookmarkManager
+            ? await this.bookmarkManager.trashSummary()
+            : { batches: 0, items: 0, newestAt: null };
+          sendResponse({ success: true, summary });
+          break;
+        }
+
+        case 'BOOKMARK_RESTORE_TRASH': {
+          if (!this.bookmarkManager) {
+            sendResponse({ success: false, error: 'not_available' });
+            break;
+          }
+          const r = await this.bookmarkManager.restoreTrash();
+          sendResponse({ success: !!r.ok, restored: r.restored });
+          break;
+        }
+
         case 'BOOKMARK_RESOLVE_CONFLICT': {
           if (!this.bookmarkManager || !message.choice) {
             sendResponse({ success: false, error: 'not_available' });

@@ -66,6 +66,7 @@ func NewRouter(db *storage.DB, cfg *config.Config) http.Handler {
 	// Middleware order runs from outermost (first) to innermost (last). We
 	// want request logging + security headers + body size limits wrapped
 	// around everything before handler-specific middleware.
+	r.Use(r.serverEpochHeader)
 	r.Use(r.requestLogger)
 	r.Use(r.securityHeaders)
 	r.Use(r.bodySizeLimit)
@@ -85,7 +86,7 @@ func NewRouter(db *storage.DB, cfg *config.Config) http.Handler {
 		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Browser", "X-Device-Name"},
-		ExposedHeaders:   []string{"Retry-After"},
+		ExposedHeaders:   []string{"Retry-After", "X-Server-Epoch"},
 		AllowCredentials: allowCreds,
 	})
 
@@ -309,6 +310,19 @@ func (r *Router) bodySizeLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet && req.Body != nil && r.config.MaxBodyBytes > 0 {
 			req.Body = http.MaxBytesReader(w, req.Body, r.config.MaxBodyBytes)
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
+// serverEpochHeader stamps every response with this database's epoch. Clients
+// compare it to the last one they saw and restart their version cursor when it
+// changes. Doing it here rather than only on /healthz means a reset is noticed
+// on the next request instead of the next heartbeat, at no extra round trip.
+func (r *Router) serverEpochHeader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if r.serverEpoch != "" {
+			w.Header().Set("X-Server-Epoch", r.serverEpoch)
 		}
 		next.ServeHTTP(w, req)
 	})

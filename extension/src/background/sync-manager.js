@@ -161,6 +161,9 @@
       quotaStatus: null
     };
 
+    // Cheap: the epoch rides on response headers, so this is just a comparison.
+    await this.handleServerEpoch(this.apiClient.observedServerEpoch);
+
     const previousServerVersion = this.lastServerVersion || 0;
 
     // Step 1: Queued tab events *before* snapshot. If the snapshot runs first,
