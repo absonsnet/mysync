@@ -20,6 +20,13 @@
       this._debounce = null;
       this._pushInFlight = null;
       this._listenersAttached = false;
+      /**
+       * True while applyFromServer() is mutating the local tree. Our own
+       * create/move/update/remove calls fire the same onCreated/onRemoved/
+       * onChanged/onMoved listeners we use to detect *user* edits, so without
+       * this flag every pull echoes straight back out as a push.
+       */
+      this._applying = false;
     }
 
     hasBookmarksAPI() {
@@ -67,6 +74,12 @@
     }
 
     async onNativeRemoved(nativeId) {
+      // Removals we performed ourselves are already reflected in the in-memory
+      // maps applyFromServer is holding; writing storage here would race with
+      // its final setBookmarkIdMaps() and resurrect stale entries.
+      if (this._applying) {
+        return;
+      }
       const s = String(nativeId);
       const maps = await this.storage.getBookmarkIdMaps();
       const u = maps.nativeToUUID && maps.nativeToUUID[s];
@@ -78,6 +91,9 @@
     }
 
     scheduleDebounce() {
+      if (this._applying) {
+        return;
+      }
       if (this._debounce) {
         clearTimeout(this._debounce);
       }
@@ -287,6 +303,44 @@
      * Apply server list (UUID parent ids) to the local profile.
      */
     async applyFromServer(version, nodes, opts) {
+      this._applying = true;
+      try {
+        return await this._applyFromServer(version, nodes, opts);
+      } finally {
+        if (this._debounce) {
+          clearTimeout(this._debounce);
+          this._debounce = null;
+        }
+        // Bookmark events are delivered a tick or two after the API call
+        // resolves, so hold the guard briefly past the last write.
+        setTimeout(() => {
+          this._applying = false;
+        }, 3000);
+      }
+    }
+
+    /**
+     * Native ids that must never be removed: the root and its permanent
+     * children ("Bookmarks bar", "Other bookmarks", "Mobile bookmarks").
+     */
+    async _protectedNativeIds() {
+      const out = new Set(['0']);
+      try {
+        const t = await this.ext.bookmarks.getTree();
+        const root = t && t[0];
+        if (root) {
+          out.add(String(root.id));
+          for (const c of root.children || []) {
+            out.add(String(c.id));
+          }
+        }
+      } catch (e) {
+        logger.warn('BookmarkManager: could not read root ids', e);
+      }
+      return out;
+    }
+
+    async _applyFromServer(version, nodes, opts) {
       const deleteOrphans = opts && opts.deleteOrphans;
       const byId = new Map();
       for (const n of nodes) {
@@ -374,18 +428,41 @@
 
       if (deleteOrphans) {
         const serverSet = new Set(nodes.map((x) => x && x.id).filter(Boolean));
-        for (const u of Object.keys(uuidToNative)) {
-          if (!serverSet.has(u)) {
+        const mapped = Object.keys(uuidToNative);
+        const overlap = mapped.filter((u) => serverSet.has(u)).length;
+
+        // The sweep assumes "mapped locally but absent from the server" means
+        // "deleted on another device". That only holds while both sides share
+        // an id space. After a reinstall, an account purge, or a first sync
+        // against a tree another device built from its *own* fresh UUIDs, every
+        // local id looks orphaned and the sweep deletes the entire profile.
+        // Zero overlap is never a legitimate delete — surface it instead.
+        if (mapped.length > 0 && overlap === 0) {
+          logger.warn(
+            'Bookmark orphan sweep aborted: server tree shares no ids with the local map',
+            { local: mapped.length, server: serverSet.size }
+          );
+          await this.storage.setBookmarkSyncState({
+            lastError: 'id_space_diverged',
+            pendingConflict: { server_version: version, nodes }
+          });
+        } else {
+          const protectedIds = await this._protectedNativeIds();
+          for (const u of mapped) {
+            if (serverSet.has(u)) {
+              continue;
+            }
             const nid = uuidToNative[u];
-            if (nid) {
+            if (nid && !protectedIds.has(String(nid))) {
               try {
-                await this.ext.bookmarks.remove(nid);
+                // remove() rejects on non-empty folders; removeTree() covers both.
+                await this.ext.bookmarks.removeTree(String(nid));
               } catch (e) {
                 logger.warn('Bookmark orphan remove', e);
               }
             }
             delete uuidToNative[u];
-            if (nativeToUUID[nid]) {
+            if (nid && nativeToUUID[nid]) {
               delete nativeToUUID[nid];
             }
           }

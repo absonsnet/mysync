@@ -10,6 +10,8 @@
     this.tabManager = backgroundService.tabManager;
     
     this.syncTimeout = null;
+    /** Handle for the failure-retry timer; kept so retries can't stack up. */
+    this.retryTimeout = null;
     this.isSyncing = false;
     this.lastSyncTime = null;
     this.lastServerVersion = 0;
@@ -65,6 +67,16 @@
       return { error: 'Not configured' };
     }
 
+    // Server told us to back off. Every caller (fast loop, alarms, SSE nudge,
+    // popup) lands here, so refuse cheaply and schedule exactly one wake-up
+    // for when the window clears instead of burning the quota further.
+    const waitMs = this.apiClient.rateLimitRemainingMs();
+    if (waitMs > 0) {
+      logger.warn(`Rate limited; skipping sync for ${Math.ceil(waitMs / 1000)}s`);
+      this.scheduleRetry(waitMs + 250);
+      return { skipped: true, rateLimited: true, retryAfterMs: waitMs };
+    }
+
     this._forceFullSync = options.full === true;
 
     logger.log('Starting sync...');
@@ -72,10 +84,15 @@
 
     try {
       const result = await this.doSync();
-      
-      // Reset backoff on successful sync
+
+      // Reset backoff on successful sync, and drop any retry queued by an
+      // earlier failure — it would otherwise fire on top of the normal loop.
       this.syncBackoffMs = 1000;
-      
+      if (this.retryTimeout) {
+        clearTimeout(this.retryTimeout);
+        this.retryTimeout = null;
+      }
+
       // Update last sync time; successful sync implies server is reachable
       this.lastSyncTime = new Date();
       await this.storage.setSyncState({
@@ -95,17 +112,31 @@
 
       // Implement exponential backoff for failed syncs
       this.syncBackoffMs = Math.min(this.syncBackoffMs * 2, this.maxBackoffMs);
-      
-      // Schedule retry
-      setTimeout(() => {
-        void this.performSync().catch((e) => logger.error('sync retry:', e));
-      }, this.syncBackoffMs);
 
-      return { error: error.message };
+      // A 429 carries the server's own Retry-After; never retry sooner.
+      const serverWait = (error && error.retryAfterMs) || 0;
+      this.scheduleRetry(Math.max(this.syncBackoffMs, serverWait));
+
+      return { error: error.message, rateLimited: !!(error && error.rateLimited) };
     } finally {
       this._forceFullSync = false;
       this.isSyncing = false;
     }
+  }
+
+  /**
+   * Replace (never stack) the pending failure retry. The previous code called
+   * setTimeout() without keeping the handle, so every failing path — the fast
+   * loop, each alarm, each SSE nudge — left its own live retry chain behind.
+   */
+  scheduleRetry(delayMs) {
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout);
+    }
+    this.retryTimeout = setTimeout(() => {
+      this.retryTimeout = null;
+      void this.performSync().catch((e) => logger.error('sync retry:', e));
+    }, Math.max(1000, delayMs));
   }
 
   async doSync() {

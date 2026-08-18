@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -310,7 +311,14 @@ func (r *Router) rateLimitMiddleware(next http.Handler) http.Handler {
 		if deviceID == "" {
 			// Fall back to remote addr if auth middleware didn't populate a
 			// device ID for some reason; still gives us *some* isolation.
-			deviceID = req.RemoteAddr
+			// RemoteAddr is "ip:port" and the port is ephemeral per connection,
+			// so keying on it whole hands every request its own fresh bucket —
+			// i.e. no limit at all. Key on the host only.
+			host, _, err := net.SplitHostPort(req.RemoteAddr)
+			if err != nil || host == "" {
+				host = req.RemoteAddr
+			}
+			deviceID = host
 		}
 		allowed, retryAfter := r.rateLimiter.allow(deviceID)
 		if !allowed {
