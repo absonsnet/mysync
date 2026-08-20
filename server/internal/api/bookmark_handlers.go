@@ -83,23 +83,32 @@ func (r *Router) putBookmarks(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := r.applyBookmarkNodes(tx, userID, clean); err != nil {
+	changed, err := r.applyBookmarkNodes(tx, userID, clean)
+	if err != nil {
 		log.Printf("putBookmarks: apply nodes: %v", err)
 		writeError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
-	newVer := serverVer + 1
-	if _, err := tx.Exec(`UPDATE bookmark_state SET version = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`, newVer, userID); err != nil {
-		log.Printf("putBookmarks: bump version: %v", err)
-		writeError(w, "Database error", http.StatusInternalServerError)
-		return
+	// A PUT that stores exactly what was already there is not an edit, so it
+	// must not move the version. Bumping on every upload made idle devices
+	// (periodic re-uploads, a manual "Sync now", a re-push of an unchanged
+	// tree) invalidate every other device's base_version, which then reported
+	// a "conflict" for bookmarks nobody had touched.
+	newVer := serverVer
+	if changed {
+		newVer = serverVer + 1
+		if _, err := tx.Exec(`UPDATE bookmark_state SET version = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`, newVer, userID); err != nil {
+			log.Printf("putBookmarks: bump version: %v", err)
+			writeError(w, "Database error", http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		writeError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]int64{"version": newVer})
+	writeJSON(w, map[string]int64{"version": newVer, "changed": boolToInt(changed)})
 }
 
 func (r *Router) loadBookmarkVersion(tx *sql.Tx, userID string) (int64, error) {
@@ -216,23 +225,24 @@ func validateBookmarkNodes(nodes []models.BookmarkNode) ([]normalizedNode, strin
 // so renaming one bookmark rewrote thousands of rows; here we only touch what
 // actually differs. The wire format is unchanged — this is purely how the
 // full-tree PUT lands in the database.
-func (r *Router) applyBookmarkNodes(tx *sql.Tx, userID string, nodes []normalizedNode) error {
+func (r *Router) applyBookmarkNodes(tx *sql.Tx, userID string, nodes []normalizedNode) (bool, error) {
+	changed := false
 	existing := make(map[string]normalizedNode)
 	rows, err := tx.Query(`SELECT id, parent_id, title, url, position FROM bookmark_nodes WHERE user_id = ?`, userID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for rows.Next() {
 		var cur normalizedNode
 		if err := rows.Scan(&cur.ID, &cur.ParentID, &cur.Title, &cur.URL, &cur.Position); err != nil {
 			rows.Close()
-			return err
+			return false, err
 		}
 		existing[cur.ID] = cur
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return false, err
 	}
 
 	incoming := make(map[string]bool, len(nodes))
@@ -256,8 +266,9 @@ func (r *Router) applyBookmarkNodes(tx *sql.Tx, userID string, nodes []normalize
 			)
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
+		changed = true
 	}
 
 	for id := range existing {
@@ -265,9 +276,17 @@ func (r *Router) applyBookmarkNodes(tx *sql.Tx, userID string, nodes []normalize
 			continue
 		}
 		if _, err := tx.Exec(`DELETE FROM bookmark_nodes WHERE user_id = ? AND id = ?`, userID, id); err != nil {
-			return err
+			return false, err
 		}
+		changed = true
 	}
 
-	return nil
+	return changed, nil
+}
+
+func boolToInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

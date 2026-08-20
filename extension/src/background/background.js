@@ -421,7 +421,11 @@ class BackgroundService {
           // Sync bookmarks if enabled
           if (config.bookmarkSyncEnabled !== false && this.bookmarkManager && this.bookmarkManager.hasBookmarksAPI()) {
             try {
-              await this.bookmarkManager.push();
+              // runSync() pulls first-or-second as configured and only pushes
+              // when there is something to push. The unconditional push() that
+              // used to run here re-uploaded an unchanged tree on every sync,
+              // bumping the server version and making other devices' next push
+              // look like a conflict.
               await this.bookmarkManager.runSync();
               result.bookmarksSynced = true;
             } catch (e) {
@@ -455,7 +459,6 @@ class BackgroundService {
 
         case 'BOOKMARK_SYNC_NOW': {
           if (this.bookmarkManager) {
-            await this.bookmarkManager.push();
             await this.bookmarkManager.runSync();
           }
           sendResponse({ success: true });
