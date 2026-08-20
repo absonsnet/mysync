@@ -708,7 +708,7 @@ class OptionsController {
       this.elements.bookmarkSyncDirection.value = config.bookmarkSyncDirection || 'bidirectional';
     }
     if (this.elements.bookmarkConflictAction) {
-      this.elements.bookmarkConflictAction.value = config.bookmarkConflictAction || 'prompt';
+      this.elements.bookmarkConflictAction.value = config.bookmarkConflictAction || 'auto_merge';
     }
     if (this.elements.bookmarkAutoResolution) {
       this.elements.bookmarkAutoResolution.value = config.bookmarkAutoResolution || 'server_wins';
@@ -3175,7 +3175,7 @@ class OptionsController {
       ...current,
       bookmarkSyncEnabled: bmEnabled,
       bookmarkSyncDirection: this.elements.bookmarkSyncDirection?.value || 'bidirectional',
-      bookmarkConflictAction: this.elements.bookmarkConflictAction?.value || 'prompt',
+      bookmarkConflictAction: this.elements.bookmarkConflictAction?.value || 'auto_merge',
       bookmarkAutoResolution: this.elements.bookmarkAutoResolution?.value || 'server_wins',
       bookmarkDeletePolicy: this.elements.bookmarkDeletePolicy?.value || 'match_server'
     };

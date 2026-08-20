@@ -22,8 +22,15 @@
       bookmarkSyncEnabled: true,
       /** bidirectional | upload_only | download_only */
       bookmarkSyncDirection: 'bidirectional',
-      /** use_server | use_local | prompt | auto_prefer */
-      bookmarkConflictAction: 'prompt',
+      /**
+       * auto_merge | use_server | use_local | prompt | auto_prefer
+       *
+       * auto_merge is the default and the only one that behaves like a real
+       * sync engine: the two trees are merged node by node. The others resolve
+       * a conflict by throwing away one whole side, which is why "prompt" used
+       * to interrupt the user for edits nothing was actually fighting over.
+       */
+      bookmarkConflictAction: 'auto_merge',
       /** server_wins | local_wins — used when bookmarkConflictAction is auto_prefer */
       bookmarkAutoResolution: 'server_wins',
       /**
@@ -40,8 +47,15 @@
     });
   }
 
+  /**
+   * Merge into the stored config rather than replacing it. Several callers pass
+   * a single key (e.g. `{ bookmarkConflictAction: 'prompt' }`); with a straight
+   * replace those calls silently erased serverUrl, deviceToken and the rest,
+   * unpairing the device as a side effect of changing one bookmark setting.
+   */
   async setConfig(config) {
-    await this.set('config', config);
+    const current = await this.getConfig();
+    await this.set('config', { ...current, ...config });
   }
 
   // Tab data management
@@ -114,6 +128,12 @@
       localDirty: false,
       lastSyncedAt: null,
       lastError: null,
+      /**
+       * The server tree as of lastServerVersion. Merge base for three-way
+       * conflict resolution; null means "no base", and the merge then treats
+       * every difference as an addition rather than a deletion.
+       */
+      lastServerNodes: null,
       /** Raw 409 body when action is prompt */
       pendingConflict: null
     });

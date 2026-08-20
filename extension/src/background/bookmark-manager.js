@@ -70,6 +70,118 @@
     return Number(res) || 0;
   }
 
+  /** Two nodes are "the same" when every synced field matches. */
+  function sameNode(a, b) {
+    if (!a || !b) {
+      return false;
+    }
+    return (a.parentId || null) === (b.parentId || null) &&
+      (a.title || '') === (b.title || '') &&
+      (a.url || null) === (b.url || null) &&
+      (a.position || 0) === (b.position || 0);
+  }
+
+  function indexById(nodes) {
+    const m = new Map();
+    for (const n of nodes || []) {
+      if (n && n.id) {
+        m.set(String(n.id), n);
+      }
+    }
+    return m;
+  }
+
+  /**
+   * Three-way merge of two bookmark trees, the way a sync engine is supposed to
+   * settle a version conflict: per node, not per tree.
+   *
+   * `base` is the tree as it stood at the version both sides branched from (the
+   * snapshot we keep after every successful push/pull). It is what makes
+   * "missing" distinguishable from "deleted": a node absent from one side but
+   * present in base was deleted there, while one absent from base was created
+   * on the other side. With no base (first sync after an install) nothing is
+   * ever treated as a deletion and the merge degrades to a safe union.
+   *
+   * Only a node edited on *both* sides since base is a genuine conflict, and
+   * there the local edit wins — deterministically, and without discarding
+   * anything the other device did to any other node.
+   *
+   * @param {Array|null} base
+   * @param {Array} ours local tree
+   * @param {Array} theirs server tree
+   */
+  function mergeNodeTrees(base, ours, theirs) {
+    const hasBase = Array.isArray(base);
+    const B = indexById(hasBase ? base : []);
+    const O = indexById(ours);
+    const T = indexById(theirs);
+    const out = [];
+    const stats = { kept: 0, fromLocal: 0, fromRemote: 0, deleted: 0, conflicts: 0 };
+
+    const ids = new Set([...O.keys(), ...T.keys()]);
+    for (const id of ids) {
+      const o = O.get(id);
+      const t = T.get(id);
+      const b = hasBase ? B.get(id) : undefined;
+
+      if (o && t) {
+        if (sameNode(o, t)) {
+          out.push(o);
+          stats.kept++;
+        } else if (b && sameNode(b, t)) {
+          out.push(o); // only we changed it
+          stats.fromLocal++;
+        } else if (b && sameNode(b, o)) {
+          out.push(t); // only the other device changed it
+          stats.fromRemote++;
+        } else {
+          out.push(o); // both changed it — local edit wins
+          stats.conflicts++;
+        }
+        continue;
+      }
+      if (o && !t) {
+        if (b) {
+          stats.deleted++; // the other device deleted it
+        } else {
+          out.push(o); // we created it
+          stats.fromLocal++;
+        }
+        continue;
+      }
+      if (t && !o) {
+        if (b) {
+          stats.deleted++; // we deleted it
+        } else {
+          out.push(t); // the other device created it
+          stats.fromRemote++;
+        }
+      }
+    }
+    return { nodes: out, stats };
+  }
+
+  /**
+   * Cap on the merge-base snapshot we keep in extension storage. Beyond this a
+   * tree is large enough that persisting a second copy is the bigger problem;
+   * the merge falls back to its no-base union behaviour, which never deletes.
+   */
+  const SNAPSHOT_MAX_NODES = 20000;
+
+  /** Trim a node list down to just the fields the merge compares. */
+  function snapshotNodes(nodes) {
+    if (!Array.isArray(nodes) || nodes.length > SNAPSHOT_MAX_NODES) {
+      return null;
+    }
+    return nodes.map((n) => ({
+      id: n.id,
+      parentId: n.parentId != null && n.parentId !== '' ? n.parentId : null,
+      title: n.title || '',
+      url: n.url != null && n.url !== '' ? n.url : null,
+      position: n.position || 0
+    }));
+  }
+
   function newUUID() {
     if (globalScope.crypto && typeof globalScope.crypto.randomUUID === 'function') {
       return globalScope.crypto.randomUUID();
@@ -93,6 +205,12 @@
        * this flag every pull echoes straight back out as a push.
        */
       this._applying = false;
+      /**
+       * Bumped on every local bookmark event. _doPush() captures it before it
+       * builds the payload and only clears localDirty if it is unchanged when
+       * the upload lands, so an edit made *during* a push is not marked synced.
+       */
+      this._dirtyToken = 0;
     }
 
     hasBookmarksAPI() {
@@ -103,8 +221,29 @@
       if (!this.hasBookmarksAPI()) {
         return;
       }
+      await this._migrateConflictDefault();
       await this.setupAlarm();
       this.attachListeners();
+    }
+
+    /**
+     * "Ask me" was the old default, and it fired on version bumps no user had
+     * caused. Now that conflicts merge, move profiles that never chose anything
+     * else onto the merging default — once, so an explicit later choice sticks.
+     */
+    async _migrateConflictDefault() {
+      try {
+        if (await this.storage.get('bookmarkConflictMergeMigration', false)) {
+          return;
+        }
+        await this.storage.set('bookmarkConflictMergeMigration', true);
+        const c = await this.storage.getConfig();
+        if (!c.bookmarkConflictAction || c.bookmarkConflictAction === 'prompt') {
+          await this.storage.setConfig({ bookmarkConflictAction: 'auto_merge' });
+        }
+      } catch (e) {
+        logger.warn('BookmarkManager: conflict-default migration', e);
+      }
     }
 
     async setupAlarm() {
@@ -114,7 +253,11 @@
         if (c.bookmarkSyncEnabled === false) {
           return;
         }
-        this.ext.alarms.create('bookmarkSync', { delayInMinutes: 2, periodInMinutes: 15 });
+        // 15 minutes between polls meant a bookmark added on one device could sit
+        // invisible on the others for a quarter of an hour, and gave local edits a
+        // long window in which to diverge from the server. Poll soon after start-up
+        // and every few minutes after that.
+        this.ext.alarms.create('bookmarkSync', { delayInMinutes: 0.5, periodInMinutes: 5 });
       } catch (e) {
         logger.warn('BookmarkManager: could not set alarm', e);
       }
@@ -166,10 +309,11 @@
       this._debounce = setTimeout(() => {
         this._debounce = null;
         void this.markDirtyAndSync();
-      }, 4000);
+      }, 1500);
     }
 
     async markDirtyAndSync() {
+      this._dirtyToken++;
       await this.storage.setBookmarkSyncState({ localDirty: true });
       const c = await this.storage.getConfig();
       if (c.bookmarkSyncEnabled === false) {
@@ -190,14 +334,18 @@
       }
       if (c.bookmarkSyncDirection === 'upload_only' || c.bookmarkSyncDirection === 'bidirectional') {
         const st = await this.storage.getBookmarkSyncState();
-        if (st.localDirty) {
+        // A device that has never synced has to upload once even though nothing
+        // is "dirty", otherwise its bookmarks only reach the server on the next
+        // edit.
+        if (st.localDirty || st.lastSyncedAt == null) {
           await this.push();
         }
       }
       if (c.bookmarkSyncDirection === 'download_only' || c.bookmarkSyncDirection === 'bidirectional') {
-        if (c.bookmarkSyncDirection === 'download_only' || !(await this.storage.getBookmarkSyncState()).localDirty) {
-          await this.pull();
-        }
+        // Previously a device with unpushed edits skipped the pull entirely, so
+        // its lastServerVersion stayed stale and the *next* push was rejected as
+        // a conflict. pull() now merges in that case instead of skipping.
+        await this.pull();
       }
     }
 
@@ -263,8 +411,19 @@
       return { nodes: out, maps: { nativeToUUID, uuidToNative } };
     }
 
-    async push() {
+    /**
+     * @param {{force?: boolean}} [opts]
+     */
+    async push(opts) {
       if (!this.hasBookmarksAPI() || !this.api.isConfigured()) {
+        return;
+      }
+      const st = await this.storage.getBookmarkSyncState();
+      // Uploading an unchanged tree used to be harmless-looking but was the main
+      // source of phantom conflicts: every PUT bumped the server version, so a
+      // device that merely ran a periodic sync invalidated every other device's
+      // base_version. Nothing local changed -> nothing to send.
+      if (!st.localDirty && st.lastSyncedAt != null && !(opts && opts.force)) {
         return;
       }
       if (this._pushInFlight) {
@@ -338,28 +497,45 @@
       const built = await this.buildNodesForServer();
       const nodes = this._sanitizeNodes(built.nodes);
       const st = await this.storage.getBookmarkSyncState();
+      const token = this._dirtyToken;
       const body = {
         base_version: st.lastServerVersion != null ? st.lastServerVersion : 0,
         nodes
       };
       let res;
+      let stored = nodes;
+      let applyLocally = false;
       try {
         res = await this.api.putBookmarks(body);
       } catch (e) {
         if (e && e.name === 'APIError' && e.statusCode === 409 && e.body) {
-          res = await this._handle409(e.body, body);
-          if (res == null) {
+          const handled = await this._handle409(e.body, body);
+          if (handled == null) {
             return;
           }
+          res = handled.res;
+          stored = handled.nodes;
+          applyLocally = !!handled.applyLocally;
         } else {
           await this.storage.setBookmarkSyncState({ lastError: (e && e.message) || 'push_failed' });
           throw e;
         }
       }
       const v = parseVersion(res);
+      if (applyLocally) {
+        // The merged tree contains the other device's work too; put it on this
+        // profile so both sides really do end up identical. This runs before the
+        // state write below because applyFromServer() writes sync state of its
+        // own and would otherwise clear the mid-flight dirty flag.
+        await this.applyFromServer(v, stored, { deleteOrphans: (await this._deletePolicy()) === 'match_server' });
+      }
       await this.storage.setBookmarkSyncState({
         lastServerVersion: v,
-        localDirty: false,
+        lastServerNodes: snapshotNodes(stored),
+        // Edits that landed while the upload was in flight are not covered by
+        // it; leaving the flag set makes the next sync pick them up instead of
+        // silently dropping them until the user touches a bookmark again.
+        localDirty: this._dirtyToken !== token,
         lastSyncedAt: Date.now(),
         lastError: null,
         pendingConflict: null
@@ -367,11 +543,13 @@
     }
 
     /**
-     * @returns {Promise<object|null>} response body or null (handled or prompt)
+     * @returns {Promise<{res: object, nodes: Array, applyLocally?: boolean}|null>}
+     *   upload result, or null when the conflict was consumed (server applied,
+     *   or parked for the user).
      */
     async _handle409(conflict, body) {
       const cfg = await this.storage.getConfig();
-      const act = cfg.bookmarkConflictAction || 'prompt';
+      const act = cfg.bookmarkConflictAction || 'auto_merge';
       const del = (await this._deletePolicy()) === 'match_server';
       if (act === 'use_server' || (act === 'auto_prefer' && cfg.bookmarkAutoResolution === 'server_wins')) {
         await this.applyFromServer(
@@ -383,6 +561,7 @@
           localDirty: false,
           lastError: null,
           pendingConflict: null,
+          lastServerNodes: snapshotNodes(conflict.nodes || []),
           lastServerVersion: conflict.server_version
         });
         return null;
@@ -394,13 +573,92 @@
       const autoLocal = act === 'auto_prefer' && cfg.bookmarkAutoResolution === 'local_wins';
       if (act === 'use_local' || (autoLocal && cfg.bookmarkLocalWinsAcknowledged === true)) {
         const next = { ...body, base_version: conflict.server_version };
-        return await this.api.putBookmarks(next);
+        return { res: await this.api.putBookmarks(next), nodes: body.nodes };
+      }
+      if (act !== 'prompt' && act !== 'auto_prefer') {
+        // Default path: settle it the way Chrome does — merge the two trees
+        // node by node and upload the result. Only a node both devices edited
+        // is a real conflict, and it does not need the user's attention.
+        const merged = await this._mergeAndUpload(conflict, body.nodes);
+        if (merged) {
+          return merged;
+        }
       }
       await this.storage.setBookmarkSyncState({
         pendingConflict: { ...conflict, overwritesServer: autoLocal },
         lastError: autoLocal ? 'local_wins_needs_ack' : 'version_conflict'
       });
       return null;
+    }
+
+    /**
+     * Merge the server tree from a 409 with our local tree and upload the
+     * result at the server's version. Returns null if even the merged upload is
+     * rejected (another device pushed again in between) so the caller can fall
+     * back to parking the conflict.
+     */
+    async _mergeAndUpload(conflict, ourNodes) {
+      const st = await this.storage.getBookmarkSyncState();
+      const serverNodes = Array.isArray(conflict.nodes) ? conflict.nodes : [];
+      const { nodes: raw, stats } = mergeNodeTrees(st.lastServerNodes || null, ourNodes, serverNodes);
+      const merged = this._sanitizeNodes(raw);
+      logger.info('Bookmark conflict merged automatically', stats);
+      try {
+        const res = await this.api.putBookmarks({
+          base_version: conflict.server_version,
+          nodes: merged
+        });
+        return { res, nodes: merged, applyLocally: true };
+      } catch (e) {
+        logger.warn('Bookmark merge upload rejected', e && e.message);
+        return null;
+      }
+    }
+
+    /**
+     * The server moved on while we still hold unpushed local edits. Merge the
+     * two and upload, rather than skipping the pull (which left our recorded
+     * version stale and guaranteed a conflict on the next push).
+     */
+    async _mergeAndPush(serverVersion, serverNodes) {
+      const built = await this.buildNodesForServer();
+      const ours = this._sanitizeNodes(built.nodes);
+      const st = await this.storage.getBookmarkSyncState();
+      const token = this._dirtyToken;
+      const { nodes: raw, stats } = mergeNodeTrees(st.lastServerNodes || null, ours, serverNodes);
+      const merged = this._sanitizeNodes(raw);
+      logger.info('Bookmark pull merged with local edits', stats);
+      const body = { base_version: serverVersion, nodes: merged };
+      let res;
+      let stored = merged;
+      try {
+        res = await this.api.putBookmarks(body);
+      } catch (e) {
+        // A third device can push between our GET and our PUT. Re-run the same
+        // conflict path rather than throwing; the next merge just has a newer
+        // server tree to fold in.
+        if (e && e.name === 'APIError' && e.statusCode === 409 && e.body) {
+          const handled = await this._handle409(e.body, body);
+          if (handled == null) {
+            return;
+          }
+          res = handled.res;
+          stored = handled.nodes;
+        } else {
+          await this.storage.setBookmarkSyncState({ lastError: (e && e.message) || 'merge_push_failed' });
+          throw e;
+        }
+      }
+      const v = parseVersion(res);
+      await this.applyFromServer(v, stored, { deleteOrphans: (await this._deletePolicy()) === 'match_server' });
+      await this.storage.setBookmarkSyncState({
+        lastServerVersion: v,
+        lastServerNodes: snapshotNodes(stored),
+        localDirty: this._dirtyToken !== token,
+        lastSyncedAt: Date.now(),
+        lastError: null,
+        pendingConflict: null
+      });
     }
 
     /**
@@ -420,9 +678,15 @@
       const nodes = Array.isArray(raw.nodes) ? raw.nodes : [];
       const st = await this.storage.getBookmarkSyncState();
       if (version === st.lastServerVersion) {
+        // Same version we already hold: remember the tree so the next merge has
+        // a base to compare against even if we have never pushed.
+        if (!st.lastServerNodes) {
+          await this.storage.setBookmarkSyncState({ lastServerNodes: snapshotNodes(nodes) });
+        }
         return;
       }
       if (st.localDirty) {
+        await this._mergeAndPush(version, nodes);
         return;
       }
       await this.applyFromServer(version, nodes, { deleteOrphans: (await this._deletePolicy()) === 'match_server' });
@@ -656,7 +920,11 @@
         }
       }
       if (nodes.length === 0) {
-        await this.storage.setBookmarkSyncState({ lastServerVersion: version, lastSyncedAt: Date.now() });
+        await this.storage.setBookmarkSyncState({
+          lastServerVersion: version,
+          lastServerNodes: [],
+          lastSyncedAt: Date.now()
+        });
         return;
       }
 
@@ -832,6 +1100,9 @@
       await this.storage.setBookmarkIdMaps({ nativeToUUID, uuidToNative });
       await this.storage.setBookmarkSyncState({
         lastServerVersion: version,
+        // The merge base for the next conflict: what the server held at this
+        // version. Without it a merge cannot tell a deletion from an addition.
+        lastServerNodes: snapshotNodes(nodes),
         lastSyncedAt: Date.now(),
         lastError: null,
         localDirty: legacy.changed
@@ -970,7 +1241,11 @@
         const nodes = p.nodes || [];
         const sv = p.serverVersion != null ? p.serverVersion : p.server_version;
         await this.applyFromServer(sv, nodes, { deleteOrphans: (await this._deletePolicy()) === 'match_server' });
-        await this.storage.setBookmarkSyncState({ pendingConflict: null, lastError: null });
+        await this.storage.setBookmarkSyncState({
+          pendingConflict: null,
+          lastError: null,
+          lastServerNodes: snapshotNodes(p.nodes || [])
+        });
         return { ok: true };
       }
       if (choice === 'use_local' || choice === 'local') {
@@ -985,6 +1260,7 @@
         const v = parseVersion(res);
         await this.storage.setBookmarkSyncState({
           lastServerVersion: v,
+          lastServerNodes: snapshotNodes(nodes),
           localDirty: false,
           pendingConflict: null,
           lastError: null
@@ -996,4 +1272,6 @@
   }
 
   globalScope.BookmarkManager = BookmarkManager;
+  // Exported for tests: the merge is the part worth pinning down.
+  globalScope.mergeBookmarkTrees = mergeNodeTrees;
 })(typeof self !== 'undefined' ? self : window);
