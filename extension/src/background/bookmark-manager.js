@@ -36,6 +36,18 @@
     menu________: 'menu'
   };
 
+  /**
+   * Canonical (browser-neutral) titles for root slots. Used when exporting
+   * the tree so Chrome and Firefox push identical root titles and the merge
+   * never sees a phantom conflict on root nodes.
+   */
+  const ROOT_CANONICAL_TITLE = {
+    toolbar: 'Toolbar',
+    other:   'Other',
+    mobile:  'Mobile',
+    menu:    'Menu'
+  };
+
   /** Titles seen on legacy synced roots, for the one-time migration below. */
   const ROOT_SLOT_BY_TITLE = {
     'bookmarks bar': 'toolbar',
@@ -44,7 +56,12 @@
     'favorites bar': 'toolbar',
     'other bookmarks': 'other',
     'bookmarks menu': 'menu',
-    'mobile bookmarks': 'mobile'
+    'mobile bookmarks': 'mobile',
+    // canonical titles used by this version
+    toolbar: 'toolbar',
+    other: 'other',
+    mobile: 'mobile',
+    menu: 'menu'
   };
 
   function rootUUID(slot) {
@@ -390,10 +407,15 @@
               }
             }
           }
+          // Use canonical titles for root nodes so Chrome's "Bookmarks Bar"
+          // and Firefox's "Bookmarks Toolbar" don't diverge in the server
+          // payload, eliminating phantom merge conflicts on root titles.
+          const slot = isRootUUID(uuid) ? rootSlotOf(uuid) : null;
+          const title = (slot && ROOT_CANONICAL_TITLE[slot]) || n.title || '';
           out.push({
             id: uuid,
             parentId: parentUUID,
-            title: n.title || '',
+            title,
             url: n.url != null && n.url !== '' ? n.url : null,
             position: i
           });
@@ -775,18 +797,27 @@
      */
     _normalizeLegacyRoots(nodes) {
       const remap = new Map();
+      // Pass 1: find legacy root folders at ANY depth (not just top-level).
+      // A previous merge glitch could nest a "Mobile bookmarks" folder under
+      // another folder; those children should be hoisted to the real root and
+      // the duplicate folder dropped.
       for (const n of nodes) {
         if (!n || !n.id || isRootUUID(n.id)) {
           continue;
         }
-        const isTopLevel = n.parentId == null || n.parentId === '';
         const isFolder = !n.url;
-        if (!isTopLevel || !isFolder) {
+        if (!isFolder) {
           continue;
         }
         const slot = ROOT_SLOT_BY_TITLE[String(n.title || '').trim().toLowerCase()];
         if (slot) {
-          remap.set(n.id, rootUUID(slot));
+          // Only remap if a real root UUID exists for this slot AND the node
+          // isn't itself already parented to that root (which would make it a
+          // legitimate user-created folder with a matching name).
+          const realRoot = rootUUID(slot);
+          if (n.parentId !== realRoot) {
+            remap.set(n.id, realRoot);
+          }
         }
       }
       if (remap.size === 0) {
@@ -1210,6 +1241,31 @@
 
     async _create(n, parentId, index, uuidToNative, nativeToUUID) {
       const isFolder = !n.url || n.url === '';
+
+      // De-duplicate: if a folder with the same title already exists under
+      // the same parent, reuse it instead of creating yet another copy.
+      // This is the main fix for the nested "Mobile bookmarks" /
+      // "Other bookmarks" proliferation bug.
+      if (isFolder) {
+        try {
+          const siblings = await this.ext.bookmarks.getChildren(parentId);
+          const existing = siblings.find(
+            (s) => !s.url && (s.title || '') === (n.title || '')
+          );
+          if (existing) {
+            const eid = String(existing.id);
+            // Only claim it if nothing else already owns this native id.
+            if (!nativeToUUID[eid]) {
+              uuidToNative[n.id] = eid;
+              nativeToUUID[eid] = n.id;
+              return;
+            }
+          }
+        } catch (e) {
+          // getChildren can fail on invalid parentId; fall through to create.
+        }
+      }
+
       const created = await this.ext.bookmarks.create({
         parentId,
         index,
