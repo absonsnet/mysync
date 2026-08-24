@@ -74,6 +74,12 @@ class BackgroundService {
         } catch (e) {
           logger.warn('Initial resync failed:', e);
         }
+        // After first sync succeeds, import existing browser history if not yet done
+        try {
+          await this.syncManager.importBrowserHistory();
+        } catch (e) {
+          logger.warn('Initial browser history import failed:', e);
+        }
       })();
     } catch (error) {
       logger.error('Failed to initialize background service:', error);
@@ -531,6 +537,14 @@ class BackgroundService {
           break;
         }
           
+        case 'IMPORT_BROWSER_HISTORY': {
+          const result = await this.syncManager.importBrowserHistory({
+            force: message.force === true
+          });
+          sendResponse({ success: true, result });
+          break;
+        }
+
         default:
           logger.warn('Unknown message type:', message.type);
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -572,6 +586,10 @@ class BackgroundService {
 
     if (config.serverUrl && config.deviceToken) {
       await this.syncManager.performSync({ full: true });
+      // Import existing browser history after first pairing (non-blocking)
+      void this.syncManager.importBrowserHistory().catch((e) =>
+        logger.warn('Browser history import after config update failed:', e)
+      );
     } else if (config.serverUrl) {
       await this.syncManager.runHeartbeat();
     }

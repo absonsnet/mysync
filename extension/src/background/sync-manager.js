@@ -302,7 +302,7 @@
         Date.now() - this._lastHistoryCacheAt > 120000;
       if (needHistory) {
         try {
-          const hist = await this.apiClient.getHistory({ limit: 200 });
+          const hist = await this.apiClient.getHistory({ limit: 500 });
           const n = Array.isArray(hist?.items) ? hist.items.length : 0;
           this._lastHistoryCacheAt = Date.now();
           if (n > 0) {
@@ -722,6 +722,147 @@
     } catch (e) {
       logger.warn('[MySync:history] backfill upload failed:', e);
     }
+  }
+
+  /**
+   * One-time bulk import of existing browser history into the server.
+   * Uses chrome.history.search to pull all history items the browser has,
+   * then uploads them in chunks. Guarded by a storage flag so it only
+   * runs once per device pairing.
+   *
+   * @param {object} [opts]
+   * @param {boolean} [opts.force] Re-import even if already done.
+   * @returns {{ imported: number, skipped: boolean }}
+   */
+  async importBrowserHistory(opts = {}) {
+    const config = await this.storage.getConfig();
+    if (!config.serverUrl || !config.deviceToken) {
+      return { imported: 0, skipped: true };
+    }
+    if (config.historySyncEnabled === false || config.historyBackfillEnabled === false) {
+      return { imported: 0, skipped: true };
+    }
+
+    // Check if already imported (unless forced)
+    if (!opts.force) {
+      const alreadyDone = await this.storage.get('browserHistoryImported', false);
+      if (alreadyDone) {
+        if (typeof logger !== 'undefined' && logger.info) {
+          logger.info('[MySync:history] importBrowserHistory: already imported, skipping');
+        }
+        return { imported: 0, skipped: true };
+      }
+    }
+
+    const api = ext.history;
+    if (!api || typeof api.search !== 'function') {
+      return { imported: 0, skipped: true };
+    }
+
+    if (typeof logger !== 'undefined' && logger.info) {
+      logger.info('[MySync:history] importBrowserHistory: starting full browser history import');
+    }
+
+    // Go back ~10 years to capture as much history as Chrome stores
+    const TEN_YEARS_MS = 10 * 365.25 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const startMs = Math.max(0, now - TEN_YEARS_MS);
+
+    let rawItems = [];
+    try {
+      const query = { text: '', startTime: startMs, endTime: now, maxResults: 100000 };
+      const maybe = api.search(query);
+      if (maybe && typeof maybe.then === 'function') {
+        rawItems = (await maybe) || [];
+      } else {
+        rawItems = await new Promise((resolve) => {
+          try {
+            api.search(query, (items) => resolve(items || []));
+          } catch (e2) {
+            resolve([]);
+          }
+        });
+      }
+    } catch (e) {
+      logger.warn('[MySync:history] importBrowserHistory: history.search failed:', e);
+      return { imported: 0, skipped: false };
+    }
+
+    const items = (rawItems || []).filter(
+      (h) => h && h.url && !this.isRestrictedHistoryUrl(String(h.url))
+    );
+
+    if (!items.length) {
+      await this.storage.set('browserHistoryImported', true);
+      if (typeof logger !== 'undefined' && logger.info) {
+        logger.info('[MySync:history] importBrowserHistory: no history items found');
+      }
+      return { imported: 0, skipped: false };
+    }
+
+    if (typeof logger !== 'undefined' && logger.info) {
+      logger.info('[MySync:history] importBrowserHistory: found', items.length, 'items to import');
+    }
+
+    const events = [];
+    for (const h of items) {
+      const t = h.lastVisitTime;
+      const ts = typeof t === 'number' ? t : now;
+      const occurred = new Date(ts);
+      const visitKey =
+        h.id != null && String(h.id) !== ''
+          ? String(h.id)
+          : `u:${String(h.url).slice(0, 200)}\t${ts}`;
+      events.push({
+        eventType: 'history',
+        url: h.url,
+        title: h.title || '',
+        windowId: 0,
+        tabCorrelationId: `hist:${visitKey}`.slice(0, 200),
+        occurredAt: occurred.toISOString(),
+        updateTriggers: 'source:browser_history_import'
+      });
+    }
+
+    let totalApplied = 0;
+    const chunkSize = 80;
+    try {
+      for (let i = 0; i < events.length; i += chunkSize) {
+        const chunk = events.slice(i, i + chunkSize);
+        const resp = await this.apiClient.uploadEvents({ events: chunk });
+        totalApplied += (resp && resp.appliedCount) || 0;
+        if (typeof logger !== 'undefined' && logger.info) {
+          logger.info('[MySync:history] importBrowserHistory: chunk', {
+            offset: i,
+            sent: chunk.length,
+            applied: resp && resp.appliedCount,
+            totalSoFar: totalApplied
+          });
+        }
+      }
+      await this.storage.set('browserHistoryImported', true);
+      if (typeof logger !== 'undefined' && logger.info) {
+        logger.info('[MySync:history] importBrowserHistory: complete', {
+          totalItems: items.length,
+          totalApplied
+        });
+      }
+    } catch (e) {
+      logger.warn('[MySync:history] importBrowserHistory: upload failed:', e);
+      // Don't set the flag — allow retry next time
+    }
+
+    // Refresh the history cache so the options page shows the new items
+    try {
+      const hist = await this.apiClient.getHistory({ limit: 200 });
+      if (Array.isArray(hist?.items) && hist.items.length > 0) {
+        await this.storage.setHistoryEventsCache(hist.items);
+      }
+    } catch (e) {
+      // non-fatal
+    }
+
+    return { imported: totalApplied, skipped: false };
   }
   }
 

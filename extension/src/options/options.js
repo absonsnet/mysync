@@ -220,6 +220,8 @@ class OptionsController {
     this._tabsPollTimer = null;
     this._lastBackgroundHistoryFetchAt = 0;
     this._historyFromCacheDebounceTimer = null;
+    this._historyNextCursor = null;
+    this._historyHasMore = false;
     this._histSessionsOffset = 0;
     this._histSessionsTotal = 0;
     this._histSessionsPageSize = 100;
@@ -521,9 +523,14 @@ class OptionsController {
       this.historyDisplayLimit = 25;
       this.updateHistoryEvents();
     });
-    this.elements.historySeeMore?.addEventListener('click', () => {
+    this.elements.historySeeMore?.addEventListener('click', async () => {
       this.historyDisplayLimit += 25;
-      this.renderHistoryEvents();
+      // If we've shown all loaded items and the server has more, fetch next page
+      if (this.historyDisplayLimit >= this.lastHistoryItems.length && this._historyHasMore) {
+        await this.loadMoreHistory();
+      } else {
+        this.renderHistoryEvents();
+      }
     });
     this.elements.exportHistoryBtn?.addEventListener('click', () => this.exportHistory());
     this.elements.historyTabFocusClear?.addEventListener('click', () => {
@@ -1803,9 +1810,11 @@ class OptionsController {
         }
         const response = await this.apiClient.getHistory({
           deviceId: selectedDevice || undefined,
-          limit: 200
+          limit: 500
         });
         items = response?.items || [];
+        this._historyNextCursor = response?.nextCursor || response?.next_cursor || null;
+        this._historyHasMore = !!this._historyNextCursor;
         if (items.length > 0) {
           // Only cache an unfiltered list; caching one device was overwriting
           // the "all devices" list and made History look empty after changing filters.
@@ -1952,6 +1961,68 @@ class OptionsController {
       this.elements.historyEmpty.style.display = 'block';
       this.elements.historyEmpty.textContent = 'Failed to load history.';
       hideHistoryCacheNotice();
+    }
+  }
+
+  /**
+   * Fetch the next page of history from the server (cursor-based pagination)
+   * and append results to lastHistoryItems. Called from "See More" when all
+   * currently loaded items are already displayed.
+   */
+  async loadMoreHistory() {
+    if (!this._historyNextCursor || !this._historyHasMore) {
+      this.renderHistoryEvents();
+      return;
+    }
+
+    try {
+      const config = await this.storage.getConfig();
+      if (!config.serverUrl || !config.deviceToken) return;
+
+      this.apiClient.setServerUrl(config.serverUrl);
+      this.apiClient.setDeviceToken(config.deviceToken);
+
+      const selectedDevice = this.elements.rawDeviceFilter?.value || '';
+      const response = await this.apiClient.getHistory({
+        deviceId: selectedDevice || undefined,
+        limit: 500,
+        cursor: this._historyNextCursor
+      });
+
+      const newItems = response?.items || [];
+      this._historyNextCursor = response?.nextCursor || response?.next_cursor || null;
+      this._historyHasMore = !!this._historyNextCursor;
+
+      if (newItems.length > 0) {
+        // Append to existing items, applying same filters
+        const selectedType = this.elements.eventTypeFilter?.value || '';
+        const searchTerm = this.elements.historySearch?.value.trim().toLowerCase() || '';
+        let filtered = newItems;
+        if (selectedType) {
+          filtered = filtered.filter((item) => (item.event_type || item.eventType) === selectedType);
+        }
+        if (searchTerm) {
+          filtered = filtered.filter((item) => {
+            const title = item.title || '';
+            const url = item.url || '';
+            return `${title} ${url}`.toLowerCase().includes(searchTerm);
+          });
+        }
+        this.lastHistoryItems = this.lastHistoryItems.concat(filtered);
+      }
+
+      if (typeof logger !== 'undefined' && logger.info) {
+        logger.info('[MySync:history:options] loadMoreHistory', {
+          newItems: newItems.length,
+          totalLoaded: this.lastHistoryItems.length,
+          hasMore: this._historyHasMore
+        });
+      }
+
+      this.renderHistoryEvents();
+    } catch (error) {
+      logger.warn('Failed to load more history:', error);
+      this.renderHistoryEvents();
     }
   }
 
@@ -2677,7 +2748,7 @@ class OptionsController {
       this.elements.historyEmpty.style.display = 'none';
 
       if (this.elements.historySeeMore) {
-        this.elements.historySeeMore.style.display = items.length > this.historyDisplayLimit ? 'inline-flex' : 'none';
+        this.elements.historySeeMore.style.display = (items.length > this.historyDisplayLimit || this._historyHasMore) ? 'inline-flex' : 'none';
       }
       this.updateHistoryTabFocusBar();
     } finally {
@@ -2729,7 +2800,7 @@ class OptionsController {
     this.elements.historyEmpty.style.display = 'none';
     if (this.elements.historySeeMore) {
       this.elements.historySeeMore.style.display =
-        ordered.length > this.historyDisplayLimit ? 'inline-flex' : 'none';
+        (ordered.length > this.historyDisplayLimit || this._historyHasMore) ? 'inline-flex' : 'none';
     }
     this.updateHistoryTabFocusBar();
   }
@@ -2929,7 +3000,7 @@ class OptionsController {
     this.elements.historyEmpty.style.display = 'none';
     if (this.elements.historySeeMore) {
       this.elements.historySeeMore.style.display =
-        totalGroups > this.historyDisplayLimit ? 'inline-flex' : 'none';
+        (totalGroups > this.historyDisplayLimit || this._historyHasMore) ? 'inline-flex' : 'none';
     }
     this.updateHistoryTabFocusBar();
   }
