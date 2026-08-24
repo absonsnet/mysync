@@ -6,8 +6,8 @@ BINARY_NAME := mysync-server
 SERVER_DIR := server
 EXTENSION_DIR := extension
 DIST_DIR := dist
-VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0-dev")
-COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION := $(shell git describe --tags --abbrev=0 2>$(DEVNULL) || echo "v0.0.0-dev")
+COMMIT := $(shell git rev-parse --short HEAD 2>$(DEVNULL) || echo "unknown")
 
 # Detect OS
 ifeq ($(OS),Windows_NT)
@@ -16,12 +16,14 @@ ifeq ($(OS),Windows_NT)
     RM := Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     MKDIR := New-Item -ItemType Directory -Force
     COPY := Copy-Item -Recurse
+    DEVNULL := NUL
 else
     DETECTED_OS := $(shell uname -s)
     BINARY_EXT :=
     RM := rm -rf
     MKDIR := mkdir -p
     COPY := cp -r
+    DEVNULL := /dev/null
 endif
 
 # Default target
