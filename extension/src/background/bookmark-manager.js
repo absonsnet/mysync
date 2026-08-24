@@ -375,6 +375,7 @@
       const out = [];
       const nativeToUUID = { ...(maps.nativeToUUID || {}) };
       const uuidToNative = { ...(maps.uuidToNative || {}) };
+      const slotOverride = { ...(maps.slotOverride || {}) };
       await this._seedRootMappings(nativeToUUID, uuidToNative);
 
       const visit = (nodes, _depth) => {
@@ -407,6 +408,19 @@
               }
             }
           }
+          // Preserve a foreign root this browser can't show (Firefox's Menu on
+          // Chrome). Such an item physically sits under Other Bookmarks, but a
+          // stored tag keeps its semantic root so the other browser restores
+          // it. Moving it to a real root, or nesting it in a folder, wins and
+          // drops the tag.
+          if (!isRootUUID(uuid)) {
+            const parentSlot = isRootUUID(parentUUID) ? rootSlotOf(parentUUID) : null;
+            if (parentSlot === 'other' && slotOverride[uuid] && slotOverride[uuid] !== 'other') {
+              parentUUID = rootUUID(slotOverride[uuid]);
+            } else if (slotOverride[uuid]) {
+              delete slotOverride[uuid];
+            }
+          }
           // Use canonical titles for root nodes so Chrome's "Bookmarks Bar"
           // and Firefox's "Bookmarks Toolbar" don't diverge in the server
           // payload, eliminating phantom merge conflicts on root titles.
@@ -429,8 +443,23 @@
         visit(tree[0].children, 0);
       }
 
-      await this.storage.setBookmarkIdMaps({ nativeToUUID, uuidToNative });
-      return { nodes: out, maps: { nativeToUUID, uuidToNative } };
+      // Always emit all four canonical root anchors, including ones this
+      // browser lacks (Chrome has no Menu). The server rejects a node whose
+      // parent is absent from the payload, so an item tagged to
+      // mysync-root-menu needs that root present; this also stops a foreign
+      // root from vanishing when this browser pushes. An empty anchor is never
+      // rendered as a folder — imports skip root nodes.
+      const presentRoots = new Set(out.filter((x) => isRootUUID(x.id)).map((x) => x.id));
+      let anchorPos = 90;
+      for (const slot of ['toolbar', 'other', 'mobile', 'menu']) {
+        const uuid = rootUUID(slot);
+        if (!presentRoots.has(uuid)) {
+          out.push({ id: uuid, parentId: null, title: ROOT_CANONICAL_TITLE[slot], url: null, position: anchorPos++ });
+        }
+      }
+
+      await this.storage.setBookmarkIdMaps({ nativeToUUID, uuidToNative, slotOverride });
+      return { nodes: out, maps: { nativeToUUID, uuidToNative, slotOverride } };
     }
 
     /**
@@ -772,6 +801,29 @@
     }
 
     /**
+     * The set of root slots this browser has natively (Chrome: toolbar/other/
+     * mobile; Firefox: those plus menu). Used to decide when a node's semantic
+     * root must be preserved as a tag because it can't be represented here.
+     */
+    async _availableSlots() {
+      const slots = new Set();
+      try {
+        const t = await this.ext.bookmarks.getTree();
+        const root = t && t[0];
+        for (const c of (root && root.children) || []) {
+          const slot = ROOT_SLOT_BY_NATIVE[String(c.id)];
+          if (slot) {
+            slots.add(slot);
+          }
+        }
+      } catch (e) {
+        // Fall back to "everything available" so we never spuriously tag.
+        return new Set(['toolbar', 'other', 'mobile', 'menu']);
+      }
+      return slots;
+    }
+
+    /**
      * Resolve a server root id to a local folder. Firefox's Bookmarks Menu has
      * no Chrome equivalent, so an unrepresented slot lands in "Other bookmarks"
      * rather than being scattered into the toolbar.
@@ -962,6 +1014,8 @@
       const maps = await this.storage.getBookmarkIdMaps();
       const uuidToNative = { ...(maps.uuidToNative || {}) };
       const nativeToUUID = { ...(maps.nativeToUUID || {}) };
+      const slotOverride = { ...(maps.slotOverride || {}) };
+      const availableSlots = await this._availableSlots();
 
       const protectedIds = await this._seedRootMappings(nativeToUUID, uuidToNative);
       const topParentId = await this.getDefaultParentId();
@@ -1028,6 +1082,20 @@
         // rename or move, and attempting it throws.
         if (isRootUUID(n.id) || (local && protectedIds.has(local))) {
           continue;
+        }
+        // If this node's semantic root doesn't exist on this browser (Firefox's
+        // Menu on Chrome), it will be placed under Other Bookmarks below — tag
+        // it so this device re-exports it to its real root. Clear the tag once
+        // it's no longer a collapsed root-level item.
+        if (isRootUUID(n.parentId)) {
+          const semSlot = rootSlotOf(n.parentId);
+          if (semSlot && !availableSlots.has(semSlot)) {
+            slotOverride[n.id] = semSlot;
+          } else if (slotOverride[n.id]) {
+            delete slotOverride[n.id];
+          }
+        } else if (slotOverride[n.id]) {
+          delete slotOverride[n.id];
         }
         const parentIdForCreate = isRootUUID(n.parentId)
           ? this._resolveRootParent(n.parentId, uuidToNative, topParentId)
@@ -1128,7 +1196,14 @@
         }
       }
 
-      await this.storage.setBookmarkIdMaps({ nativeToUUID, uuidToNative });
+      // Drop tags for nodes no longer in the tree so the map can't grow forever.
+      for (const u of Object.keys(slotOverride)) {
+        if (!byId.has(u)) {
+          delete slotOverride[u];
+        }
+      }
+
+      await this.storage.setBookmarkIdMaps({ nativeToUUID, uuidToNative, slotOverride });
       await this.storage.setBookmarkSyncState({
         lastServerVersion: version,
         // The merge base for the next conflict: what the server held at this

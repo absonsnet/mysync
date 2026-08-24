@@ -110,15 +110,22 @@
 
   // Last good history list from API — used when offline
   async getBookmarkIdMaps() {
-    return await this.get('bookmarkIdMaps', { nativeToUUID: {}, uuidToNative: {} });
+    return await this.get('bookmarkIdMaps', { nativeToUUID: {}, uuidToNative: {}, slotOverride: {} });
   }
 
-  /** @param {{ nativeToUUID?: object, uuidToNative?: object }} p */
+  /**
+   * @param {{ nativeToUUID?: object, uuidToNative?: object, slotOverride?: object }} p
+   * slotOverride maps a node UUID -> the root slot it semantically belongs to
+   * (e.g. 'menu') when this browser has no native root for that slot and the
+   * node was collapsed into Other Bookmarks. It keeps the item tagged so the
+   * other browser restores it to its real root.
+   */
   async setBookmarkIdMaps(p) {
     const cur = await this.getBookmarkIdMaps();
     await this.set('bookmarkIdMaps', {
       nativeToUUID: p.nativeToUUID != null ? p.nativeToUUID : cur.nativeToUUID,
-      uuidToNative: p.uuidToNative != null ? p.uuidToNative : cur.uuidToNative
+      uuidToNative: p.uuidToNative != null ? p.uuidToNative : cur.uuidToNative,
+      slotOverride: p.slotOverride != null ? p.slotOverride : (cur.slotOverride || {})
     });
   }
 
