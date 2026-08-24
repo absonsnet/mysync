@@ -230,8 +230,14 @@ func (r *Router) authMiddleware(next http.Handler) http.Handler {
 // Health check endpoint
 func (r *Router) healthCheck(w http.ResponseWriter, req *http.Request) {
 	v := Version
+	// Normalize to the vX.X.X form regardless of whether the git tag carried a
+	// leading "v" (tags in this repo are stored without it). Only numeric-looking
+	// versions get the prefix; sentinels like "development" are left untouched.
+	if len(v) > 0 && v[0] >= '0' && v[0] <= '9' {
+		v = "v" + v
+	}
 	if Commit != "" && Commit != "unknown" {
-		v = fmt.Sprintf("%s (%s)", Version, Commit)
+		v = fmt.Sprintf("%s (%s)", v, Commit)
 	}
 	writeJSON(w, map[string]string{
 		"status":       "ok",

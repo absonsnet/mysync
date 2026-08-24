@@ -139,13 +139,13 @@ dev-extension:
 .PHONY: docker
 docker:
 	@echo "Building Docker image..."
-	docker build -t mysync-server:$(VERSION) ./$(SERVER_DIR)
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t mysync-server:$(VERSION) ./$(SERVER_DIR)
 	docker tag mysync-server:$(VERSION) mysync-server:latest
 
 .PHONY: docker-run
 docker-run:
 	@echo "Running with Docker Compose..."
-	docker-compose up -d
+	VERSION=$(VERSION) COMMIT=$(COMMIT) docker-compose up -d --build
 
 .PHONY: docker-stop
 docker-stop:
@@ -162,7 +162,7 @@ docker-logs:
 deploy: test build
 	@echo "Deploying to production..."
 	@echo "Make sure to set your environment variables first!"
-	docker-compose -f docker-compose.prod.yml up -d --build
+	VERSION=$(VERSION) COMMIT=$(COMMIT) docker-compose -f docker-compose.prod.yml up -d --build
 
 .PHONY: deploy-server
 deploy-server: test-server server

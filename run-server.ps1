@@ -62,4 +62,13 @@ if ($UnpairAll) {
   go run ./cmd unpair-all
 }
 
-go run ./cmd
+# Inject the same version metadata the Makefile/Docker builds use, so a direct
+# `run-server.ps1` start reports vX.X.X (hash) identically. Derived from the last
+# git tag + short commit; falls back gracefully outside a git checkout.
+$VERSION = (git -C "$repoRoot" describe --tags --abbrev=0 2>$null)
+if (-not $VERSION) { $VERSION = "v0.0.0-dev" }
+$COMMIT = (git -C "$repoRoot" rev-parse --short HEAD 2>$null)
+if (-not $COMMIT) { $COMMIT = "unknown" }
+$ldflags = "-X mysync-server/internal/api.Version=$VERSION -X mysync-server/internal/api.Commit=$COMMIT"
+
+go run -ldflags $ldflags ./cmd

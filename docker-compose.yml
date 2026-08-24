@@ -4,6 +4,12 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+      args:
+        # Populated from git by the Makefile docker targets (or an .env / shell
+        # export). Fall back to a dev version when not supplied so the build
+        # never fails.
+        VERSION: ${VERSION:-v0.0.0-dev}
+        COMMIT: ${COMMIT:-unknown}
     container_name: mysync-server
     restart: unless-stopped
     environment:

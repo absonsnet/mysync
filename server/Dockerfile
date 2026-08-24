@@ -15,8 +15,15 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o mysync-server ./cmd
+# Version metadata injected at build time (passed as --build-arg / compose args).
+# Defaults keep the build working when they are not supplied.
+ARG VERSION=v0.0.0-dev
+ARG COMMIT=unknown
+
+# Build the application (inject version + commit, same as the Makefile binary target)
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags "-X mysync-server/internal/api.Version=${VERSION} -X mysync-server/internal/api.Commit=${COMMIT}" \
+    -o mysync-server ./cmd
 
 # Final stage
 FROM alpine:latest
