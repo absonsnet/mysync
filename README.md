@@ -1,6 +1,6 @@
 # MySync
 
-> Sync tabs across Chrome and Firefox browsers with a self-hosted server
+> Sync tabs, bookmarks, and browsing history across Chrome and Firefox browsers with a self-hosted server
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-blue.svg)](https://golang.org)
@@ -10,7 +10,7 @@
 > **⚠ Beta — This software is still in active development and testing.
 > Use at your own risk. APIs and data formats may change without notice.**
 
-A **Manifest V3** browser extension and **Go server** for syncing tabs across
+A **Manifest V3** browser extension and **Go server** for syncing tabs, bookmarks, and browsing history across
 devices. Privacy-focused, self-hosted, and email-optional — bootstrap with a
 CLI invite token, no SMTP required.
 
@@ -36,11 +36,11 @@ CLI invite token, no SMTP required.
 
 ## Features
 
-- **Real-time sync** — WebSocket/SSE with polling fallback
+- **Real-time sync** — WebSocket/SSE with polling fallback for tabs, bookmarks, and history
 - **Cross-browser** — Chrome + Firefox (MV3), same server
 - **Device management** — list, name, and revoke devices from the options page
 - **Conflict resolution** — optimistic locking on snapshots, last-write-wins
-  with stale-event drop on individual tab events
+  with stale-event drop on individual sync events
 - **Self-hosted** — you own the data; no third party required
 - **Multiple pairing methods** — CLI invite, device pairing code, or magic-link
 - **Quotas & rate limiting** — prevent runaway storage and abuse
