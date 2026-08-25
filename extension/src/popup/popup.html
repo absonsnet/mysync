@@ -19,82 +19,101 @@
   </div>
 
   <div class="main-content">
-    <!-- Configuration Section (shown when not configured) -->
-    <div class="section setup-section" id="setupSection" style="display: none;">
-      <h2>Setup Required</h2>
-      <p>Configure your server to start syncing tabs.</p>
-      <button class="primary-btn" id="openOptionsBtn">Open Settings</button>
+    <!-- ===== HOME VIEW (default) ===== -->
+    <div id="homeView">
+      <!-- Configuration Section (shown when not configured) -->
+      <div class="section setup-section" id="setupSection" style="display: none;">
+        <h2>Setup Required</h2>
+        <p>Configure your server to start syncing tabs.</p>
+        <button class="primary-btn" id="openOptionsBtn">Open Settings</button>
+      </div>
+
+      <!-- Sync Actions -->
+      <div class="section actions-section" id="actionsSection">
+        <div class="action-buttons">
+          <button class="sync-btn" id="manualSyncBtn" type="button" title="Sync now">
+            <span class="sync-icon">⟳</span>
+            <span>Sync Now</span>
+          </button>
+          <button class="settings-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings">
+            <span class="settings-icon">⚙</span>
+          </button>
+        </div>
+        
+        <div class="sync-info" id="syncInfo">
+          <div class="info-item">
+            <span class="label">Last sync:</span>
+            <span class="value" id="lastSyncTime">Never</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Local tabs:</span>
+            <span class="value" id="localTabCount">0</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Queued events:</span>
+            <span class="value" id="queuedEvents">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Remote Devices -->
+      <div class="section devices-section" id="devicesSection">
+        <h2>
+          <span>Other Devices</span>
+          <button class="refresh-btn" id="refreshBtn" type="button" title="Pull latest from server and refresh list">⟳</button>
+        </h2>
+
+        <p class="cache-notice" id="devicesCacheNotice" style="display: none;" role="status" aria-live="polite"></p>
+        
+        <div class="devices-search">
+          <input type="search" id="deviceSearch" placeholder="Search tabs" autocomplete="off">
+        </div>
+        
+        <div class="devices-list" id="devicesList">
+          <div class="loading-message" id="devicesLoading">Loading devices...</div>
+          <div class="empty-message" id="devicesEmpty" style="display: none;">
+            No other devices found. Install the extension on other browsers to see their tabs here.
+          </div>
+        </div>
+      </div>
+
+      <!-- Quota Information -->
+      <div class="section quota-section" id="quotaSection" style="display: none;">
+        <div class="quota-info">
+          <div class="quota-bar">
+            <div class="quota-fill" id="quotaFill" style="width: 0%"></div>
+          </div>
+          <div class="quota-text">
+            <span id="quotaUsage">0 KB</span> / <span id="quotaLimit">0 KB</span> used
+          </div>
+          <div class="quota-status" id="quotaStatus"></div>
+        </div>
+      </div>
+
+      <!-- Error Messages -->
+      <div class="section error-section" id="errorSection" style="display: none;">
+        <div class="error-message" id="errorMessage"></div>
+      </div>
+
+      <div class="toast toast-success" id="toastSuccess" style="display: none;" role="status" aria-live="polite">
+        <span id="toastSuccessText"></span>
+      </div>
     </div>
 
-    <!-- Sync Actions -->
-    <div class="section actions-section" id="actionsSection">
-      <div class="action-buttons">
-        <button class="sync-btn" id="manualSyncBtn" type="button" title="Sync now">
-          <span class="sync-icon">⟳</span>
-          <span>Sync Now</span>
+    <!-- ===== HISTORY VIEW ===== -->
+    <div id="historyView" style="display: none;">
+      <div class="section history-toolbar">
+        <div class="history-search">
+          <input type="search" id="historySearch" placeholder="Search history…" autocomplete="off">
+        </div>
+        <button class="inject-btn" id="injectHistoryBtn" type="button" title="Add synced URLs to native browser history for autocomplete">
+          <span class="inject-icon">↓</span>
+          <span>Inject into Browser History</span>
         </button>
-        <button class="settings-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings">
-          <span class="settings-icon">⚙</span>
-        </button>
       </div>
-      
-      <div class="sync-info" id="syncInfo">
-        <div class="info-item">
-          <span class="label">Last sync:</span>
-          <span class="value" id="lastSyncTime">Never</span>
-        </div>
-        <div class="info-item">
-          <span class="label">Local tabs:</span>
-          <span class="value" id="localTabCount">0</span>
-        </div>
-        <div class="info-item">
-          <span class="label">Queued events:</span>
-          <span class="value" id="queuedEvents">0</span>
-        </div>
+      <div class="history-timeline" id="historyTimeline">
+        <div class="loading-message" id="historyLoading">Loading history…</div>
       </div>
-    </div>
-
-    <!-- Remote Devices -->
-    <div class="section devices-section" id="devicesSection">
-      <h2>
-        <span>Other Devices</span>
-        <button class="refresh-btn" id="refreshBtn" type="button" title="Pull latest from server and refresh list">⟳</button>
-      </h2>
-
-      <p class="cache-notice" id="devicesCacheNotice" style="display: none;" role="status" aria-live="polite"></p>
-      
-      <div class="devices-search">
-        <input type="search" id="deviceSearch" placeholder="Search tabs" autocomplete="off">
-      </div>
-      
-      <div class="devices-list" id="devicesList">
-        <div class="loading-message" id="devicesLoading">Loading devices...</div>
-        <div class="empty-message" id="devicesEmpty" style="display: none;">
-          No other devices found. Install the extension on other browsers to see their tabs here.
-        </div>
-      </div>
-    </div>
-
-    <!-- Quota Information -->
-    <div class="section quota-section" id="quotaSection" style="display: none;">
-      <div class="quota-info">
-        <div class="quota-bar">
-          <div class="quota-fill" id="quotaFill" style="width: 0%"></div>
-        </div>
-        <div class="quota-text">
-          <span id="quotaUsage">0 KB</span> / <span id="quotaLimit">0 KB</span> used
-        </div>
-        <div class="quota-status" id="quotaStatus"></div>
-      </div>
-    </div>
-
-    <!-- Error Messages -->
-    <div class="section error-section" id="errorSection" style="display: none;">
-      <div class="error-message" id="errorMessage"></div>
-    </div>
-
-    <div class="toast toast-success" id="toastSuccess" style="display: none;" role="status" aria-live="polite">
-      <span id="toastSuccessText"></span>
     </div>
 
     <!-- Loading Overlay -->
@@ -106,7 +125,8 @@
 
   <div class="footer">
     <div class="footer-links">
-      <a href="#" id="historyLink">History</a>
+      <a href="#" id="homeLink" class="footer-link active">Home</a>
+      <a href="#" id="historyLink" class="footer-link">History</a>
       <a href="#" id="testServerLink">Test server</a>
       <a href="#" id="helpLink">Help</a>
     </div>

@@ -612,12 +612,16 @@ func (r *Router) shouldRecordHistoryBackfill(tx *sql.Tx, userID, deviceID string
 	if u == "" {
 		return false, nil
 	}
+	// Account-wide dedup: if the same URL was already recorded for this
+	// account within 30s (by any device), skip the duplicate.  This handles
+	// the common case where Chrome Sync already unified browser history
+	// across two PCs and both extensions upload the same visits.
 	var lastAt time.Time
 	err := tx.QueryRow(`
 		SELECT occurred_at FROM tab_history
-		WHERE user_id = ? AND device_id = ? AND url = ? AND event_type IN ('history', 'create', 'update')
+		WHERE user_id = ? AND url = ? AND event_type IN ('history', 'create', 'update')
 		ORDER BY occurred_at DESC LIMIT 1
-	`, userID, deviceID, u).Scan(&lastAt)
+	`, userID, u).Scan(&lastAt)
 	if err == sql.ErrNoRows {
 		return true, nil
 	}

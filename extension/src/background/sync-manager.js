@@ -302,7 +302,7 @@
         Date.now() - this._lastHistoryCacheAt > 120000;
       if (needHistory) {
         try {
-          const hist = await this.apiClient.getHistory({ limit: 500 });
+          const hist = await this.apiClient.getHistory({ limit: 1000 });
           const n = Array.isArray(hist?.items) ? hist.items.length : 0;
           this._lastHistoryCacheAt = Date.now();
           if (n > 0) {

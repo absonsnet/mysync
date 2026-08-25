@@ -162,6 +162,13 @@
     });
   }
 
+  /** Unified account-wide history timeline (sorted newest-first by server). */
+  async getUnifiedHistory() {
+    const cache = await this.getHistoryEventsCache();
+    if (!cache || !Array.isArray(cache.items)) return [];
+    return cache.items;
+  }
+
   // Sync state management
   async getSyncState() {
     return await this.get('syncState', {

@@ -72,13 +72,20 @@ class PopupController {
       quotaStatus: document.getElementById('quotaStatus'),
       errorMessage: document.getElementById('errorMessage'),
       loadingText: document.getElementById('loadingText'),
+      homeLink: document.getElementById('homeLink'),
       historyLink: document.getElementById('historyLink'),
       testServerLink: document.getElementById('testServerLink'),
       helpLink: document.getElementById('helpLink'),
       toastSuccess: document.getElementById('toastSuccess'),
       toastSuccessText: document.getElementById('toastSuccessText'),
-      devicesCacheNotice: document.getElementById('devicesCacheNotice')
+      devicesCacheNotice: document.getElementById('devicesCacheNotice'),
+      homeView: document.getElementById('homeView'),
+      historyView: document.getElementById('historyView'),
+      historyTimeline: document.getElementById('historyTimeline'),
+      historySearch: document.getElementById('historySearch'),
+      injectHistoryBtn: document.getElementById('injectHistoryBtn')
     };
+    this._historyItems = [];
   }
 
   async initialize() {
@@ -120,9 +127,13 @@ class PopupController {
     this.elements.refreshBtn.addEventListener('click', () => this.refreshRemoteTabs());
     this.elements.deviceSearch?.addEventListener('input', () => this.updateRemoteDevices());
     
+    this.elements.homeLink?.addEventListener('click', (e) => {
+      e.preventDefault();
+      this.showHomeView();
+    });
     this.elements.historyLink.addEventListener('click', (e) => {
       e.preventDefault();
-      this.openHistory();
+      this.showHistoryView();
     });
     this.elements.testServerLink?.addEventListener('click', (e) => {
       e.preventDefault();
@@ -132,6 +143,8 @@ class PopupController {
       e.preventDefault();
       this.openHelp();
     });
+    this.elements.historySearch?.addEventListener('input', () => this.filterHistoryTimeline());
+    this.elements.injectHistoryBtn?.addEventListener('click', () => this.injectIntoBrowserHistory());
 
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
@@ -958,14 +971,173 @@ class PopupController {
     window.close();
   }
 
-  async openHistory() {
+  showHomeView() {
+    this.elements.homeView.style.display = 'block';
+    this.elements.historyView.style.display = 'none';
+    this.elements.homeLink?.classList.add('active');
+    this.elements.historyLink.classList.remove('active');
+  }
+
+  async showHistoryView() {
+    this.elements.homeView.style.display = 'none';
+    this.elements.historyView.style.display = 'block';
+    this.elements.homeLink?.classList.remove('active');
+    this.elements.historyLink.classList.add('active');
+    await this.loadHistoryTimeline();
+  }
+
+  async loadHistoryTimeline() {
+    const timeline = this.elements.historyTimeline;
+    timeline.innerHTML = '<div class="loading-message">Loading history…</div>';
+
     try {
-      await ext.storage.local.set({ [OPTIONS_TAB_KEY]: 'history' });
+      const response = await ext.runtime.sendMessage({ type: 'GET_UNIFIED_HISTORY' });
+      if (response?.success && response.items?.length > 0) {
+        this._historyItems = response.items;
+        this.renderHistoryTimeline(response.items, timeline);
+        return;
+      }
     } catch (e) {
-      logger.warn('Could not set options tab', e);
+      logger.warn('GET_UNIFIED_HISTORY failed, falling back to storage:', e);
     }
-    ext.runtime.openOptionsPage();
-    window.close();
+
+    // Fallback: read from storage directly
+    const items = await this.storage.getUnifiedHistory();
+    this._historyItems = items;
+    if (!items?.length) {
+      timeline.innerHTML = '<div class="empty-message">No history yet. Browse some pages and sync to see your unified timeline.</div>';
+      return;
+    }
+    this.renderHistoryTimeline(items, timeline);
+  }
+
+  renderHistoryTimeline(items, container) {
+    container.innerHTML = '';
+    const searchTerm = this.elements.historySearch?.value.trim().toLowerCase() || '';
+    const filtered = searchTerm
+      ? items.filter((item) => {
+          const haystack = `${item.title || ''} ${item.url || ''}`.toLowerCase();
+          return haystack.includes(searchTerm);
+        })
+      : items;
+
+    if (filtered.length === 0) {
+      container.innerHTML = '<div class="empty-message">No matching history items.</div>';
+      return;
+    }
+
+    // Group by date
+    const groups = new Map();
+    for (const item of filtered) {
+      const ts = item.occurred_at || item.occurredAt;
+      const date = ts ? new Date(ts) : new Date();
+      const dayKey = date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' });
+      if (!groups.has(dayKey)) groups.set(dayKey, []);
+      groups.get(dayKey).push({ ...item, _date: date });
+    }
+
+    for (const [dayLabel, dayItems] of groups) {
+      const header = document.createElement('div');
+      header.className = 'history-date-header';
+      header.textContent = dayLabel;
+      container.appendChild(header);
+
+      for (const item of dayItems) {
+        container.appendChild(this.createHistoryItem(item));
+      }
+    }
+  }
+
+  createHistoryItem(item) {
+    const div = document.createElement('div');
+    div.className = 'history-item';
+
+    const favicon = document.createElement('img');
+    favicon.className = 'tab-favicon';
+    favicon.alt = '';
+    if (typeof bindTabFaviconImg === 'function') {
+      bindTabFaviconImg(favicon, item.favicon_url || item.faviconUrl, item.url);
+    } else {
+      favicon.src = item.favicon_url || item.faviconUrl || '';
+    }
+    div.appendChild(favicon);
+
+    const info = document.createElement('div');
+    info.className = 'history-item-info';
+
+    const title = document.createElement('div');
+    title.className = 'history-item-title';
+    title.textContent = item.title || item.url || 'Untitled';
+    title.title = item.title || '';
+
+    const meta = document.createElement('div');
+    meta.className = 'history-item-meta';
+
+    const urlSpan = document.createElement('span');
+    urlSpan.className = 'history-item-url';
+    urlSpan.textContent = this.formatURL(item.url || '');
+    urlSpan.title = item.url || '';
+    meta.appendChild(urlSpan);
+
+    const time = document.createElement('span');
+    time.className = 'history-item-time';
+    time.textContent = item._date
+      ? item._date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+      : '';
+    meta.appendChild(time);
+
+    if (item.device_id || item.deviceId) {
+      const badge = document.createElement('span');
+      badge.className = 'history-device-badge';
+      const did = item.device_id || item.deviceId || '';
+      badge.textContent = did.length > 8 ? did.slice(-8) : did;
+      badge.title = 'Originating device';
+      meta.appendChild(badge);
+    }
+
+    info.appendChild(title);
+    info.appendChild(meta);
+    div.appendChild(info);
+
+    div.addEventListener('click', () => this.openTab(item.url));
+    return div;
+  }
+
+  filterHistoryTimeline() {
+    if (!this._historyItems?.length) return;
+    this.renderHistoryTimeline(this._historyItems, this.elements.historyTimeline);
+  }
+
+  async injectIntoBrowserHistory() {
+    const items = this._historyItems || await this.storage.getUnifiedHistory();
+    if (!items?.length) {
+      this.showError('No history items to inject.');
+      return;
+    }
+
+    const confirmed = confirm(
+      'Warning: Due to browser limitations, injected history will appear in your ' +
+      'native browser history with today\'s date. This is useful for URL autocomplete. ' +
+      'Do you want to proceed?'
+    );
+    if (!confirmed) return;
+
+    this.showLoading('Injecting history…');
+    let injected = 0;
+    const seen = new Set();
+    for (const item of items) {
+      const url = item.url;
+      if (!url || this.isRestrictedUrl(url) || seen.has(url)) continue;
+      seen.add(url);
+      try {
+        await ext.history.addUrl({ url });
+        injected++;
+      } catch (e) {
+        // skip failures (e.g. invalid URLs)
+      }
+    }
+    this.hideLoading();
+    this.showSuccessToast(`Injected ${injected} unique URLs into browser history`);
   }
 
   openHelp() {

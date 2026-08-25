@@ -545,6 +545,30 @@ class BackgroundService {
           break;
         }
 
+        case 'GET_UNIFIED_HISTORY': {
+          // Force refresh if cache is stale (>60s)
+          const cache = await this.storage.getHistoryEventsCache();
+          const age = cache ? Date.now() - (cache.updatedAt || 0) : Infinity;
+          if (age > 60000) {
+            try {
+              const config = await this.storage.getConfig();
+              if (config.serverUrl && config.deviceToken) {
+                this.apiClient.setServerUrl(config.serverUrl);
+                this.apiClient.setDeviceToken(config.deviceToken);
+                const hist = await this.apiClient.getHistory({ limit: 1000 });
+                if (Array.isArray(hist?.items) && hist.items.length > 0) {
+                  await this.storage.setHistoryEventsCache(hist.items);
+                }
+              }
+            } catch (e) {
+              logger.warn('GET_UNIFIED_HISTORY refresh failed:', e);
+            }
+          }
+          const items = await this.storage.getUnifiedHistory();
+          sendResponse({ success: true, items });
+          break;
+        }
+
         default:
           logger.warn('Unknown message type:', message.type);
           sendResponse({ success: false, error: 'Unknown message type' });

@@ -249,6 +249,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash ON auth_tokens (token_hash);
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires ON auth_tokens (expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_bookmark_nodes_user_id ON bookmark_nodes (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_tab_history_user_url_at ON tab_history (user_id, url, occurred_at);
 `
 
 // server_meta holds installation-scoped values that must survive restarts but
